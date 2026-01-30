@@ -1,0 +1,125 @@
+  default_par_number 15 0
+
+  region  0 22  -290 290 -30 40 VACUUM 
+
+
+  region  0 12 -290 290 -30 40 IGZO 
+
+  region  12 22 -290 290 -30 40 OXIDE 
+
+  donor 0 22  -290 290 -30 40 0
+
+  donor 0 22  -290 290 -30 40 2e16
+
+  motioncube  0 22 -290 290 -30 40 PASS   PASS   PASS   PASS  PASS PASS 
+
+
+
+  motionplane  0 1 -100 -100 -30 40  LEFT CATCH
+
+  motionplane  0 1 -100 -100 -30 40 RIGHT GENERATE 
+
+  motionplane  0 1 -290 -290 -30 40 LEFT REFLECT
+
+  motionplane 0 0 -290 -100 -30 40 UP REFLECT
+
+
+
+  motionplane  0 1 100 100 -30 40 RIGHT CATCH
+
+  motionplane  0 1 100 100 -30 40 LEFT GENERATE
+
+  motionplane  0 1 290 290 -30 40 RIGHT REFLECT
+
+  motionplane 0 0 100 290 -30 40 UP REFLECT
+
+  
+
+  motionplane  1 12 -290 -290 -30 40 LEFT SCATTOX
+
+  motionplane  1 12 290 290 -30 40 RIGHT SCATTOX  
+
+  motionplane 12 12 -290 290 -30 40 DOWN SCATTOX
+
+  motionplane  0 0 -100 100 -30 40   UP SCATTOX  
+
+  motionplane 1 12 -290 290 -30 -30 FRONT SCATTOX 
+
+  motionplane 0 1 -100 100 -30 -30 FRONT SCATTOX
+
+  motionplane  0 1 -290 -100 -30 -30 FRONT SCATTOX
+
+  motionplane 0 1 100 290 -30 -30 FRONT SCATTOX
+
+  motionplane 1 12 -290 290 40 40 BACK SCATTOX
+
+  motionplane 0 1 -100 100 40 40 BACK SCATTOX 
+
+  motionplane 0 1 -290 -100 40 40 BACK SCATTOX
+
+  motionplane 0 1 100 290 40 40 BACK SCATTOX
+
+  motionplane  1 1 -290 -100 -30 40 UP CATCH
+
+  motionplane  1 1 -290 -100 -30 40 DOWN GENERATE
+
+  motionplane  1 1 100 290 -30 40 UP CATCH
+
+  motionplane  1 1 100 290 -30 40 DOWN GENERATE
+
+  motionplane  0 1 -290 -100 -30 -30 
+
+
+
+  attachcontact  0 12 -290 290 -30 40 0 
+
+  attachcontact  0 2 -290 -100 -30 40 1  
+
+  attachcontact  0 2 100 290 -30 40 2  
+
+  ScatterArea 0 12 -290 290 -30 40 3	
+
+
+  ep_parm 4 0.5 4 0.5 4 0.5 3.1
+
+
+  parnumber 0 12 -290 290 -30 40 5 0
+
+  surface_scatter_range 0 12 -290 290 -30 40
+
+  quantumRegion 0 12 -290 290 -30 40
+
+
+
+  contact
+
+    1 0 
+
+    0 0 -290 -100 -30 40
+
+    0     
+
+
+
+  contact 
+
+    1 0
+
+    0 0 100 290 -30 40
+
+    4
+
+
+
+  contact 
+
+    1 0
+
+    22 22 -290 290 -30 40 
+
+    4
+
+end
+
+
+

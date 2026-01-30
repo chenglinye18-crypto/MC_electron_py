@@ -1,0 +1,14 @@
+gridFile=lgrid.txt
+
+device_file_name=ldg.txt
+
+total_step=7000
+
+ElectronNumber=600000
+
+Temperature=300
+
+dt=2e-16
+
+output_dir = ./output
+
