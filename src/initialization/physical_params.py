@@ -27,7 +27,7 @@ def init_physical_parameters(params, materials_found):
     FSC = 1 / 137.036     # Fine structure constant
     PI = np.pi
 
-    T0 = params.get("Temperature", 300.0)
+    T0 = params["Temperature"]
 
     # =========================================================================
     # 2. Scaling Factor System (Reference units for normalization)
@@ -103,7 +103,15 @@ def init_physical_parameters(params, materials_found):
         mt_val = 0.1905
 
     # =========================================================================
-    # 4. Final Normalization (Suffix: _norm)
+    # 4. Derived density of states (conduction band)
+    # =========================================================================
+    h_planck = 2.0 * PI * PLANCK
+    md_eff = (ml_val * mt_val * mt_val) ** (1.0 / 3.0) * EM
+    Nc_real = 2.0 * ((2.0 * PI * md_eff * BOLTZ * T0) / (h_planck * h_planck)) ** 1.5
+    Nc_norm = Nc_real / conc0
+
+    # =========================================================================
+    # 5. Final Normalization (Suffix: _norm)
     # =========================================================================
     phys_config = {
         # Meta info and Scales
@@ -122,8 +130,9 @@ def init_physical_parameters(params, materials_found):
         "eg_real": eg_real,
         "eps_rel": eps_rel,
         "sirho_real": sirho_real,
-        "ml_val": "ml_val",
-        "mt_val": "mt_val",
+        "ml_val": ml_val,
+        "mt_val": mt_val,
+        "Nc_real": Nc_real,
 
         # Normalized Bulk Parameters
         "sia0_norm": sia0_real / spr0,
@@ -135,7 +144,7 @@ def init_physical_parameters(params, materials_found):
         # Surface/Contact Parameters (Real values for Schottky logic)
         "psi_real": psi_real,
 
-        # Dielectric Constants (Normalized for Poisson solver)
+        # 其他材料归一化介电系数 Dielectric Constants (Normalized for Poisson solver)
         "eps_vacuum_norm": 1.0 / (4 * PI * cvr_norm * FSC),
         "eps_oxide_norm": 3.9 / (4 * PI * cvr_norm * FSC),
         "eps_semi_norm": eps_rel / (4 * PI * cvr_norm * FSC),
@@ -144,6 +153,7 @@ def init_physical_parameters(params, materials_found):
         "ml_norm": ml_val,
         "mt_norm": mt_val,
         "alpha_norm": alpha_val * (eV0 / EC),  # alpha[1/eV] * kBT[eV]
+        "Nc_norm": Nc_norm,
 
         # Coefficients
         "a0pi_norm": (2.0 * PI) / (sia0_real / spr0),

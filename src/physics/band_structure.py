@@ -23,8 +23,13 @@ class AnalyticBand:
             "valley_idx": None,
         }
         self.emin = 0.0
-        self.dtable = 0.001
-        self.mtab = 20000
+        self.dtable_eV = float(self.phys["energy_step_eV"])
+        self.energy_max_eV = float(self.phys["energy_max_eV"])
+        eV0_eV = self.phys["scales"]["eV0_J"] / 1.602176e-19
+        if eV0_eV <= 0.0:
+            eV0_eV = 1.0
+        self.dtable = self.dtable_eV / eV0_eV
+        self.mtab = max(1, int(self.energy_max_eV / self.dtable_eV + 0.5))
         self.mwle_ana = 4000
         self.dlist = 0.0
 
@@ -33,7 +38,7 @@ class AnalyticBand:
         self.analytic_tlist = None
 
         self.ek_file_override = None
-        if self.phys.get("material") == "IGZO":
+        if self.phys["material"] == "IGZO":
             self.ek_file_override = "bands_IGZO.txt"
 
         self.valley_config = None
@@ -52,18 +57,18 @@ class AnalyticBand:
 
         print("[Band] Initializing Analytic Band Structure framework...")
 
-    def initialize(self) -> None:
+    def initialize(self, output_root: str | None = None) -> None:
         if self.ek_data["k"] is None:
             self.read_analytic_data(ek_file_override=self.ek_file_override)
         self.init_valley_configuration()
         self.init_axis_lookup_table()
         self.build_analytic_lists()
         self.init_phonon_spectrum()
-        self.build_analytic_scattering_table()
+        self.build_analytic_scattering_table(output_root=output_root)
         self.init_derived_constants()
 
     def read_analytic_data(self, ek_file_override: str | None = None) -> None:
-        mat_suffix = "_IGZO" if self.phys.get("material") == "IGZO" else ""
+        mat_suffix = "_IGZO" if self.phys["material"] == "IGZO" else ""
 
         # 1. DOS table
         dos_filename = f"analytic_dos{mat_suffix}.txt"
@@ -89,7 +94,7 @@ class AnalyticBand:
         # 2. E-k-v table
         if ek_file_override:
             ek_filename = ek_file_override
-        elif self.phys.get("material") == "IGZO":
+        elif self.phys["material"] == "IGZO":
             ek_filename = "bands_igzo.txt"
         else:
             ek_filename = f"analytic_ek{mat_suffix}.txt"
@@ -144,7 +149,7 @@ class AnalyticBand:
 
 
     def init_valley_configuration(self) -> None:
-        mat = self.phys.get("material", "SILICON")
+        mat = self.phys["material"]
         if mat == "IGZO":
             self.valley_config = {"num_valleys": 1, "degeneracy": 1, "type": "GAMMA"}
         else:
@@ -269,7 +274,7 @@ class AnalyticBand:
         Read phonon dispersion data (phonon_dispersion*.txt), parse metadata,
         and normalize omega/velocity tables.
         """
-        mat_suffix = "_IGZO" if self.phys.get("material") == "IGZO" else ""
+        mat_suffix = "_IGZO" if self.phys["material"] == "IGZO" else ""
         filename = f"phonon_dispersion{mat_suffix}.txt"
         file_path = os.path.join(self.input_path, filename)
         if not os.path.exists(file_path):
@@ -344,8 +349,8 @@ class AnalyticBand:
         print(f"      -> a0 = {self.phonon['a0']:.4e}, qmax = {self.phonon['qmax']:.4f}")
         print(f"      -> Data normalized by eV0={eV0:.4f} eV, velo0={velo0:.2e} m/s")
 
-    def build_analytic_scattering_table(self) -> None:
-        if self.phys.get("material") != "IGZO":
+    def build_analytic_scattering_table(self, output_root: str | None = None) -> None:
+        if self.phys["material"] != "IGZO":
             print("[Warning] Scattering table: only IGZO branch implemented.")
             return
         if self.phonon is None or self.phonon["omega_table"] is None:
@@ -362,22 +367,22 @@ class AnalyticBand:
 
         eV0_J = self.phys["scales"]["eV0_J"]
         time0 = self.phys["scales"]["time0"]
-        T_lattice = eV0_J / kB
+        T_lattice = float(self.phys["Temperature"])
 
-        rho = self.phys.get("sirho_real")
+        rho = self.phys["sirho_real"]
         E_ac_eV = 5.0
         D_LA = E_ac_eV * q_e
         D_TA = E_ac_eV * q_e
         Dopt_LO = 5e5 * q_e
         Dopt_TO = 5e5 * q_e
 
-        ml = self.phys.get("ml_val", 0.268) * m0
-        mt = self.phys.get("mt_val", 0.264) * m0
+        ml = float(self.phys["ml_val"]) * m0
+        mt = float(self.phys["mt_val"]) * m0
         md_SI = (ml * mt * mt) ** (1.0 / 3.0)
 
         alpha_val = 0.0
 
-        a0 = self.phonon.get("a0", 0.0)
+        a0 = self.phonon["a0"]
         Rs = a0 * (3.0 / (16.0 * pi)) ** (1.0 / 3.0) if a0 > 0.0 else 0.0
 
         E_tail_eV = 0.18
@@ -422,7 +427,7 @@ class AnalyticBand:
             num_energy_bins,
             energy_grid,
             q_grid,
-            self.phonon.get("qmax", q_grid_limit),
+            self.phonon["qmax"],
             dq_int,
             omega_table,
             vg_table,
@@ -460,6 +465,35 @@ class AnalyticBand:
 
         print(f"      -> Scattering built. Max rate = {np.max(sumscatt):.4e}")
 
+        if output_root:
+            scatter_dir = os.path.join(output_root, "Scatter")
+            os.makedirs(scatter_dir, exist_ok=True)
+            out_file = os.path.join(scatter_dir, "scattering_rates.txt")
+            print(f"      -> Writing scattering table to: {out_file}")
+
+            eV0_eV = eV0_J / q_e
+            with open(out_file, "w", encoding="utf-8") as handle:
+                handle.write("# IGZO Analytical Scattering Rates\n")
+                handle.write(f"# Temperature: {T_lattice:.2f} K\n")
+                handle.write(f"# Scaling Time0: {time0:.4e} s\n")
+                handle.write(
+                    "# Columns: Energy(eV) Total(1/s) AC(1/s) "
+                    "LO_Abs(1/s) LO_Em(1/s) TO_Abs(1/s) TO_Em(1/s)\n"
+                )
+                for idx in range(num_energy_bins):
+                    energy_eV = energy_grid[idx] * eV0_eV
+                    r_tot = sumscatt[idx] / time0
+                    r_ac = dose[0, idx] / time0
+                    r_lo_abs = dose[1, idx] / time0
+                    r_lo_ems = dose[2, idx] / time0
+                    r_to_abs = dose[3, idx] / time0
+                    r_to_ems = dose[4, idx] / time0
+                    handle.write(
+                        f"{energy_eV:.6f} {r_tot:.6e} {r_ac:.6e} "
+                        f"{r_lo_abs:.6e} {r_lo_ems:.6e} {r_to_abs:.6e} {r_to_ems:.6e}\n"
+                    )
+            print("      -> Scattering table export complete.")
+
     def init_derived_constants(self) -> None:
         print("      -> Calculating derived constants (Ni, Barrier)...")
 
@@ -469,8 +503,8 @@ class AnalyticBand:
         field0 = self.phys["scales"]["pot0_V"] / spr0
 
         T0 = eV0_J / 1.380649e-23
-        mat = self.phys.get("material", "SILICON")
-        sieg_norm = self.phys.get("sieg_norm", 0.0)
+        mat = self.phys["material"]
+        sieg_norm = self.phys["sieg_norm"]
 
         if mat == "IGZO":
             self.barrier_height_norm = 3.23 / (eV0_J / 1.602176e-19)

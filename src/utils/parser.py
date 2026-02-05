@@ -51,6 +51,7 @@ class InputParser:
         device = {
             "regions": [],
             "donors": [],
+            "acceptors": [],
             "motion_planes": [],
             "motion_cubes": [],
             "scatter_areas": [],
@@ -86,6 +87,11 @@ class InputParser:
                 bounds = [int(t) for t in tokens[1:7]]
                 value = float(tokens[7])
                 device["donors"].append({"bounds": bounds, "value": value})
+
+            elif cmd == "acceptor" and len(tokens) >= 8:
+                bounds = [int(t) for t in tokens[1:7]]
+                value = float(tokens[7])
+                device["acceptors"].append({"bounds": bounds, "value": value})
 
             elif cmd == "motionplane" and len(tokens) >= 9:
                 bounds = [int(t) for t in tokens[1:7]]

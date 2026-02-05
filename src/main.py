@@ -10,7 +10,13 @@ import time
 from utils.parser import InputParser
 from physics.mesh import Mesh
 from physics.band_structure import AnalyticBand
-from initialization import init_physical_parameters, init_poisson, init_particles
+from Poisson import PoissonSolver
+from initialization import (
+    init_physical_parameters,
+    init_cell_data,
+    init_point_data,
+    init_particles,
+)
 
 
 def print_banner() -> None:
@@ -60,56 +66,75 @@ def main() -> int:
     print_banner()
     print(f"Start Time: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
 
-    print(f"[1/4] Reading input file: {args.input}")
+    print(f"[STEP 1] Reading input file: {args.input}")
     parser = InputParser()
     config = parser.parse_master(args.input)
     if config:
-        print("  -> gridFile        :", config.get("gridFile", ""))
-        print("  -> device_file_name:", config.get("device_file_name", ""))
-        print("  -> total_step      :", config.get("total_step", 0))
-        print("  -> ElectronNumber  :", config.get("ElectronNumber", 0))
-        print("  -> Temperature     :", config.get("Temperature", 0))
-        print("  -> dt              :", config.get("dt", 0.0))
-        print("  -> output_dir      :", config.get("output_dir", ""))
+        print("  -> gridFile        :", config["gridFile"])
+        print("  -> device_file_name:", config["device_file_name"])
+        print("  -> total_step      :", config["total_step"])
+        print("  -> ElectronNumber  :", config["ElectronNumber"])
+        print("  -> Temperature     :", config["Temperature"])
+        print("  -> dt              :", config["dt"])
+        print("  -> output_dir      :", config["output_dir"])
 
-        dt_val = config.get("dt", 0.0)
+        dt_val = config["dt"]
         if isinstance(dt_val, (int, float)) and dt_val > 1e-15:
             print("  -> Warning: dt is large for MC; consider a smaller step.")
 
     base_dir = os.path.dirname(os.path.abspath(args.input))
-    ldg_name = config.get("device_file_name", "ldg.txt")
+    ldg_name = config["device_file_name"]
     ldg_path = os.path.join(base_dir, ldg_name)
-    print(f"[2/4] Reading device file: {ldg_path}")
+    print(f"[STEP 2] Reading device file: {ldg_path}")
     device = parser.parse_ldg(ldg_path)
     mats = sorted(parser.found_semiconductors)
     print("  -> Semiconductors  :", mats if mats else "None")
-    print("  -> Regions         :", len(device.get("regions", [])))
-    print("  -> Contacts        :", len(device.get("contacts", [])))
+    print("  -> Regions         :", len(device["regions"]))
+    print("  -> Contacts        :", len(device["contacts"]))
 
-    grid_name = config.get("gridFile", "lgrid.txt")
+    grid_name = config["gridFile"]
     grid_path = os.path.join(base_dir, grid_name)
-    print(f"[3/4] Reading grid file: {grid_path}")
+    print(f"[STEP 3] Reading grid file: {grid_path}")
     coords = parser.parse_lgrid(grid_path)
-    mesh = Mesh(coords, device.get("regions", []))
+    mesh = Mesh(coords, device["regions"])
     print(f"  -> Mesh cells       : {mesh.nx} x {mesh.ny} x {mesh.nz}")
 
     # Initialization steps (placeholders)
     phys_config = init_physical_parameters(config, parser.found_semiconductors)
+    phys_config["energy_step_eV"] = float(config["energy_step_eV"])
+    phys_config["energy_max_eV"] = float(config["energy_max_eV"])
 
     project_root = os.path.dirname(base_dir)
+    output_base = config["output_dir"]
+    if not os.path.isabs(output_base):
+        output_base = os.path.join(project_root, output_base)
+    run_id = time.strftime("%Y%m%d_%H%M%S")
+    output_root = os.path.join(output_base, run_id)
+    os.makedirs(output_root, exist_ok=True)
+    config["output_root"] = output_root
+    print(f"[Main] Output directory created: {output_root}")
+
+    print("[STEP 4] Initializing band structure")
+
     bands_dir = os.path.join(project_root, "data", "bands")
     band_struct = AnalyticBand(phys_config, bands_dir)
-    band_struct.initialize()
+    band_struct.initialize(output_root=output_root)
 
     phys_config["Ni_norm"] = band_struct.Ni_norm
     phys_config["barrier_height_norm"] = band_struct.barrier_height_norm
     phys_config["beta_norm"] = band_struct.beta_norm
     phys_config["difpr"] = band_struct.difpr
 
-    poisson_env = init_poisson(mesh, phys_config, device)
+    print("[STEP 5] Initializing cell and point data")
+    init_cell_data(mesh, config, phys_config, device, input_dir=base_dir)
+    init_point_data(mesh, phys_config)
+
+    print("[STEP 6] Initializing Poisson solver")
+    #初始化Poisson求解器，主要构建eps矩阵
+    poisson_solver = PoissonSolver(mesh, phys_config, device, build_matrix=True)
     _ensemble = init_particles(config, mesh, device)
 
-    _ = poisson_env  # placeholder to avoid unused warnings
+    _ = poisson_solver  # placeholder to avoid unused warnings
     initialize(config)
     run_mc(config)
     postprocess(config)

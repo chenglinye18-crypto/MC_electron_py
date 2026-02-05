@@ -9,10 +9,11 @@ import numpy as np
 
 try:
     from scipy import sparse
-    from scipy.sparse.linalg import spsolve
+    from scipy.sparse.linalg import spsolve, splu
 except ImportError:  # Optional at this stage
     sparse = None
     spsolve = None
+    splu = None
 
 
 class PoissonSolver:
@@ -27,30 +28,30 @@ class PoissonSolver:
         self._init_epsilon_map()
 
         self.matrix_A = None
-        if build_matrix:
-            self.matrix_A = self._build_laplacian_matrix()
+        self.linear_solver = None
 
         self.phi = np.zeros(self.num_cells)
+        self._init_poisson_matrix(build_matrix=build_matrix)
 
     def _idx(self, i: int, j: int, k: int) -> int:
         return (i * self.ny + j) * self.nz + k
 
     def _init_epsilon_map(self) -> None:
-        eps_vac = self.phys.get("eps_vacuum_norm", 1.0)
-        eps_ox = self.phys.get("eps_oxide_norm", eps_vac)
-        eps_semi = self.phys.get("eps_semi_norm", eps_ox)
+        eps_vac_norm = self.phys["eps_vacuum_norm"]
+        eps_ox_norm = self.phys["eps_oxide_norm"]
+        eps_semi_norm = self.phys["eps_semi_norm"]
 
         mat = self.mesh.material_id
         ids = self.mesh.label_map
-        vac_id = ids.get("VACUUM", 0)
-        ox_id = ids.get("OXIDE", 1)
-        igzo_id = ids.get("IGZO", 3)
-        si_id = ids.get("SILICON", 2)
+        vac_id = ids["VACUUM"]
+        ox_id = ids["OXIDE"]
+        igzo_id = ids["IGZO"]
+        si_id = ids["SILICON"]
 
-        eps = np.full_like(mat, eps_vac, dtype=float)
-        eps[mat == ox_id] = eps_ox
-        eps[(mat == igzo_id) | (mat == si_id)] = eps_semi
-        self.eps_grid = eps
+        eps_norm = np.full_like(mat, eps_vac_norm, dtype=float)
+        eps_norm[mat == ox_id] = eps_ox_norm
+        eps_norm[(mat == igzo_id) | (mat == si_id)] = eps_semi_norm
+        self.eps_grid_norm = eps_norm
 
     def _build_laplacian_matrix(self):
         """
@@ -59,13 +60,39 @@ class PoissonSolver:
         """
         raise NotImplementedError("Laplacian assembly not implemented yet.")
 
+    def _init_poisson_matrix(self, build_matrix: bool) -> None:
+        """
+        Initialize Poisson matrix and optional direct solver in constructor.
+        Mirrors C++ init_poisson_matrix + Amesos solver setup flow.
+        """
+        if not build_matrix:
+            print("[Poisson] Matrix assembly deferred (build_matrix=False).")
+            return
+
+        try:
+            self.matrix_A = self._build_laplacian_matrix()
+        except NotImplementedError as exc:
+            print(f"[Poisson] {exc} Matrix setup deferred.")
+            self.matrix_A = None
+            return
+
+        if sparse is None or splu is None:
+            print("[Poisson] scipy.sparse is unavailable; direct LU not initialized.")
+            return
+
+        # Keep matrix in CSC format so repeated solves can reuse the factorization.
+        self.matrix_A = self.matrix_A.tocsc()
+        print("[Poisson] Pre-computing LU factorization...")
+        self.linear_solver = splu(self.matrix_A)
+        print("[Poisson] LU factorization complete.")
+
     def calculate_contact_bc(self, contact: dict) -> float:
         """
         Return Dirichlet value for a contact.
         Uses C++-style PhiMS + Vapp convention.
         """
-        vapp = float(contact.get("vapp", 0.0))
-        phi_ms = float(contact.get("phi_ms", 0.0))
+        vapp = float(contact["vapp"])
+        phi_ms = float(contact["phi_ms"])
         return vapp + phi_ms
 
     def solve_nonlinear(self, particle_rho: np.ndarray) -> np.ndarray:
@@ -84,7 +111,10 @@ class PoissonSolver:
             rhs = self._compute_rhs(phi_old, particle_rho)
 
             # NOTE: Dirichlet BC handling is not wired yet.
-            phi_star = spsolve(self.matrix_A, rhs)
+            if self.linear_solver is not None:
+                phi_star = self.linear_solver.solve(rhs)
+            else:
+                phi_star = spsolve(self.matrix_A, rhs)
 
             phi_new = (1.0 - alpha) * phi_old + alpha * phi_star
             diff = np.linalg.norm(phi_new - phi_old) / (np.linalg.norm(phi_new) + 1e-12)

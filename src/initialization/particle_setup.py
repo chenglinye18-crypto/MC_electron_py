@@ -12,7 +12,7 @@ def init_particles(params: dict, mesh, device_structure: dict) -> dict:
     mesh: Mesh instance
     device_structure: parsed ldg device dictionary
     """
-    num_p = int(params.get("ElectronNumber", 0))
+    num_p = int(params["ElectronNumber"])
     print(f"[Init] Allocating particles: {num_p} (placeholder).")
 
     ensemble = {
