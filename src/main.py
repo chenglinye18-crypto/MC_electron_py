@@ -15,8 +15,8 @@ from initialization import (
     init_physical_parameters,
     init_cell_data,
     init_point_data,
-    init_particles,
 )
+from Particle import Particle
 
 
 def print_banner() -> None:
@@ -100,9 +100,10 @@ def main() -> int:
     print(f"  -> Mesh cells       : {mesh.nx} x {mesh.ny} x {mesh.nz}")
 
     # Initialization steps (placeholders)
+    print("[STEP 4] Initializing physical parameters")
     phys_config = init_physical_parameters(config, parser.found_semiconductors)
-    phys_config["energy_step_eV"] = float(config["energy_step_eV"])
-    phys_config["energy_max_eV"] = float(config["energy_max_eV"])
+    phys_config["energy_step_eV"] = float(config["energy_step_eV"])  #为了散射表
+    phys_config["energy_max_eV"] = float(config["energy_max_eV"])   #为了散射表
 
     project_root = os.path.dirname(base_dir)
     output_base = config["output_dir"]
@@ -114,7 +115,7 @@ def main() -> int:
     config["output_root"] = output_root
     print(f"[Main] Output directory created: {output_root}")
 
-    print("[STEP 4] Initializing band structure")
+    print("[STEP 5] Initializing band structure")
 
     bands_dir = os.path.join(project_root, "data", "bands")
     band_struct = AnalyticBand(phys_config, bands_dir)
@@ -125,14 +126,16 @@ def main() -> int:
     phys_config["beta_norm"] = band_struct.beta_norm
     phys_config["difpr"] = band_struct.difpr
 
-    print("[STEP 5] Initializing cell and point data")
+    print("[STEP 6] Initializing cell and point data")
     init_cell_data(mesh, config, phys_config, device, input_dir=base_dir)
     init_point_data(mesh, phys_config)
 
-    print("[STEP 6] Initializing Poisson solver")
+    print("[STEP 7] Initializing Poisson solver")
     #初始化Poisson求解器，主要构建eps矩阵
     poisson_solver = PoissonSolver(mesh, phys_config, device, build_matrix=True)
-    _ensemble = init_particles(config, mesh, device)
+
+    print("[STEP 8] Initializing particle ensemble")
+    _ensemble = Particle(mesh, config, phys_config, band_struct, output_root)
 
     _ = poisson_solver  # placeholder to avoid unused warnings
     initialize(config)

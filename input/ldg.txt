@@ -7,9 +7,9 @@
 
   region  12 22 -290 290 -30 40 OXIDE 
 
-  donor 0 22  -290 290 -30 40 0
+  donor 0 12  -290 290 -30 40 0
 
-  donor 0 22  -290 290 -30 40 2e16
+  donor 0 12  -290 290 -30 40 2e16
 
   motioncube  0 22 -290 290 -30 40 PASS   PASS   PASS   PASS  PASS PASS 
 

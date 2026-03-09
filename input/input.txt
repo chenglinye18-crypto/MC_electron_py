@@ -12,3 +12,7 @@ dt=2e-16
 
 output_dir = ./output
 
+energy_step_eV=0.001
+energy_max_eV=7.0
+InitialConcentrationFile=
+export_particles=1

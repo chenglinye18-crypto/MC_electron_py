@@ -85,12 +85,12 @@ class InputParser:
 
             elif cmd == "donor" and len(tokens) >= 8:
                 bounds = [int(t) for t in tokens[1:7]]
-                value = float(tokens[7])
+                value = float(tokens[7])*1e6  # Convert from cm^-3 to m^-3
                 device["donors"].append({"bounds": bounds, "value": value})
 
             elif cmd == "acceptor" and len(tokens) >= 8:
                 bounds = [int(t) for t in tokens[1:7]]
-                value = float(tokens[7])
+                value = float(tokens[7])*1e6  # Convert from cm^-3 to m^-3
                 device["acceptors"].append({"bounds": bounds, "value": value})
 
             elif cmd == "motionplane" and len(tokens) >= 9:

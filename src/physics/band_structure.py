@@ -25,7 +25,8 @@ class AnalyticBand:
         self.emin = 0.0
         self.dtable_eV = float(self.phys["energy_step_eV"])
         self.energy_max_eV = float(self.phys["energy_max_eV"])
-        eV0_eV = self.phys["scales"]["eV0_J"] / 1.602176e-19
+        q_e = self.phys["q_e"]
+        eV0_eV = self.phys["scales"]["eV0_J"] / q_e
         if eV0_eV <= 0.0:
             eV0_eV = 1.0
         self.dtable = self.dtable_eV / eV0_eV
@@ -37,9 +38,8 @@ class AnalyticBand:
         self.analytic_ptlist = None
         self.analytic_tlist = None
 
-        self.ek_file_override = None
-        if self.phys["material"] == "IGZO":
-            self.ek_file_override = "bands_IGZO.txt"
+        self.material = self.phys["material"]
+        self.ek_file_override = f"bands_{self.material}.txt"
 
         self.valley_config = None
         self.axis_lookup_table = None
@@ -68,10 +68,8 @@ class AnalyticBand:
         self.init_derived_constants()
 
     def read_analytic_data(self, ek_file_override: str | None = None) -> None:
-        mat_suffix = "_IGZO" if self.phys["material"] == "IGZO" else ""
-
         # 1. DOS table
-        dos_filename = f"analytic_dos{mat_suffix}.txt"
+        dos_filename = f"analytic_dos{self.material}.txt"
         dos_path = os.path.join(self.input_path, dos_filename)
         if os.path.exists(dos_path):
             print(f"[Band] Reading DOS data from: {dos_path}")
@@ -79,25 +77,26 @@ class AnalyticBand:
 
             self.dos_table = np.zeros(self.mtab + 1, dtype=float)
 
-            eV0 = self.phys["scales"]["eV0_J"] / 1.602176e-19
+            q_e = self.phys["q_e"]
+            eV0 = self.phys["scales"]["eV0_J"] / q_e
+            conc0 = self.phys["scales"]["conc0"]
+            if raw_dos.shape[1] < 2:
+                raise ValueError(f"[Band] DOS file {dos_path} must have at least 2 columns (E, DOS).")
             E_eV = raw_dos[:, 0]
-            dos_val = raw_dos[:, 2]
+            dos_real = raw_dos[:, 1]
+            # DOS_norm = DOS_real[1/eV/m^3] * eV0[eV] / conc0[1/m^3]
+            dos_norm = dos_real * eV0 / conc0
             E_norm = E_eV / eV0
-            itab = ((E_norm - self.emin) / self.dtable + 0.5).astype(int)
+            itab = ((E_norm - self.emin) / self.dtable + 0.5).astype(int) #dos的能量柱序号
 
             valid_mask = (itab >= 0) & (itab <= self.mtab)
-            self.dos_table[itab[valid_mask]] = dos_val[valid_mask]
-            print(f"      -> DOS table loaded. Max DOS: {np.max(self.dos_table):.4e}")
+            self.dos_table[itab[valid_mask]] = dos_norm[valid_mask] #实际算出来的和dos_norm一样
+            print(f"      -> DOS table loaded. Max DOS: {np.max(self.dos_table / eV0 * conc0):.4e} eV^-1 m^-3")
         else:
             print(f"      [Warning] DOS file {dos_path} not found.")
 
         # 2. E-k-v table
-        if ek_file_override:
-            ek_filename = ek_file_override
-        elif self.phys["material"] == "IGZO":
-            ek_filename = "bands_igzo.txt"
-        else:
-            ek_filename = f"analytic_ek{mat_suffix}.txt"
+        ek_filename = ek_file_override
         ek_path = os.path.join(self.input_path, ek_filename)
         if not os.path.exists(ek_path):
             raise FileNotFoundError(f"Critical: E-k band file not found at {ek_path}")
@@ -116,7 +115,8 @@ class AnalyticBand:
             print("      [Warning] sia0_norm missing, using raw k-vectors.")
         self.ek_data["k"] = np.column_stack((kx_pi, ky_pi, kz_pi)) * k_scale
 
-        eV0 = self.phys["scales"]["eV0_J"] / 1.602176e-19
+        q_e = self.phys["q_e"]
+        eV0 = self.phys["scales"]["eV0_J"] / q_e
         self.ek_data["energy"] = E_eV_in / eV0
 
         v_scale = 1.0 / self.phys["scales"]["velo0"]
@@ -210,6 +210,19 @@ class AnalyticBand:
         self.axis_map = final_indices.astype(np.int32)
         print(f"      -> Lookup Map built. Size: {map_size}, Resolution: {self.k_map_res}")
 
+    def get_axis_indices_vectorized(self, k_values: np.ndarray) -> np.ndarray:
+        """
+        Vectorized lookup for k-axis indices using precomputed axis_map.
+        """
+        if not hasattr(self, "axis_map"):
+            raise ValueError("[Error] axis_map is not initialized.")
+        if not np.all(np.isfinite(k_values)):
+            raise ValueError("[Error] Non-finite k_values detected.")
+        map_idx_float = (k_values - self.k_map_min) * self.k_map_scale
+        map_idx_float = np.clip(map_idx_float, 0, self.axis_map.size - 1)
+        map_idx = map_idx_float.astype(np.int32)
+        return self.axis_map[map_idx]
+
     def build_analytic_lists(self, debug_output_path: str | None = None) -> None:
         """
         Build energy-bin lookup lists for fast E -> k-index mapping.
@@ -219,7 +232,8 @@ class AnalyticBand:
 
         print("[Band] Building Analytic Lists (Energy Binning)...")
 
-        eV0 = self.phys["scales"]["eV0_J"] / 1.602176e-19
+        q_e = self.phys["q_e"]
+        eV0 = self.phys["scales"]["eV0_J"] / q_e
         if self.dlist <= 0.0:
             target_res_eV = 0.002
             self.dlist = eV0 / target_res_eV
@@ -337,8 +351,8 @@ class AnalyticBand:
             self.phonon["dq"] = self.phonon["qmax"] / (self.phonon["nq_tab"] - 1)
 
         # File stores angular frequency (rad/s). Convert to energy (eV) first.
-        hbar_si = 1.054571e-34
-        q_si = 1.602176e-19
+        hbar_si = self.phys["hbar"]
+        q_si = self.phys["q_e"]
         eV0 = self.phys["scales"]["eV0_J"] / q_si
         velo0 = self.phys["scales"]["velo0"]
         hw_eV = (hbar_si * w_vals) / q_si
@@ -359,10 +373,10 @@ class AnalyticBand:
 
         print("[Band] Building Analytic Scattering Table (IGZO + Numba)...")
 
-        kB = 1.380649e-23
-        hbar = 1.054571e-34
-        q_e = 1.602176e-19
-        m0 = 9.109383e-31
+        kB = self.phys["kb"]
+        hbar = self.phys["hbar"]
+        q_e = self.phys["q_e"]
+        m0 = self.phys["m0"]
         pi = np.pi
 
         eV0_J = self.phys["scales"]["eV0_J"]
@@ -502,13 +516,15 @@ class AnalyticBand:
         conc0 = self.phys["scales"]["conc0"]
         field0 = self.phys["scales"]["pot0_V"] / spr0
 
-        T0 = eV0_J / 1.380649e-23
+        kB = self.phys["kb"]
+        q_e = self.phys["q_e"]
+        T0 = eV0_J / kB
         mat = self.phys["material"]
         sieg_norm = self.phys["sieg_norm"]
 
         if mat == "IGZO":
-            self.barrier_height_norm = 3.23 / (eV0_J / 1.602176e-19)
-            self.beta_norm = (2.15e-5 / (eV0_J / 1.602176e-19)) * np.sqrt(field0)
+            self.barrier_height_norm = 3.23 / (eV0_J / q_e)
+            self.beta_norm = (2.15e-5 / (eV0_J / q_e)) * np.sqrt(field0)
             self.difpr = {"PELEC": 0.20, "PHOLE": 0.35, "POXEL": 0.20}
 
             A_ref = 2.10e16
@@ -518,8 +534,8 @@ class AnalyticBand:
             self.Ni_norm = ni_real_m3 / conc0
             print(f"         [IGZO] Ni (Real): {ni_real_cm3:.2e} cm^-3")
         else:
-            self.barrier_height_norm = 3.2 / (eV0_J / 1.602176e-19)
-            self.beta_norm = (2.15e-5 / (eV0_J / 1.602176e-19)) * np.sqrt(field0)
+            self.barrier_height_norm = 3.2 / (eV0_J / q_e)
+            self.beta_norm = (2.15e-5 / (eV0_J / q_e)) * np.sqrt(field0)
             self.difpr = {"PELEC": 0.16, "PHOLE": 0.35, "POXEL": 0.16}
 
             A_ref = 3.87e16

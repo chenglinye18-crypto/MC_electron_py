@@ -74,7 +74,7 @@ def init_physical_parameters(params, materials_found):
         # IGZO specific parameters
         psi_real = 4.16     # Electron Affinity for IGZO
         # Lattice constant calculation: a = 9.6 * sqrt(3) * 1e-10
-        sia0_real = 9.6 * np.sqrt(3.0) * 1.0e-10
+        sia0_real = 9.6 * np.sqrt(3.0) / 2 * 1.0e-10
         sirho_real = 6.10e3
         siul_real = 6.00e3
         siut_real = 6.00e3
@@ -124,6 +124,12 @@ def init_physical_parameters(params, materials_found):
             "pot0_V": pot0,
             "conc0": conc0,
         },
+
+        # Fundamental constants (for direct reuse elsewhere)
+        "kb": BOLTZ,
+        "m0": EM,
+        "hbar": PLANCK,
+        "q_e": EC,
 
         # real Physical Parameters
         "Temperature": T0,
