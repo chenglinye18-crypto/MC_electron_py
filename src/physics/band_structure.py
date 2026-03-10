@@ -14,9 +14,10 @@ class AnalyticBand:
         self.phys = phys_config
         self.input_path = input_path
 
-        self.dos_table = None
+        self.dos_norm = None
         self.ek_data = {
-            "k": None,
+            "k_pi": None,
+            "k_norm": None,
             "energy": None,
             "velocity": None,
             "weight": None,
@@ -25,18 +26,22 @@ class AnalyticBand:
         self.emin = 0.0
         self.dtable_eV = float(self.phys["energy_step_eV"])
         self.energy_max_eV = float(self.phys["energy_max_eV"])
-        q_e = self.phys["q_e"]
-        eV0_eV = self.phys["scales"]["eV0_J"] / q_e
-        if eV0_eV <= 0.0:
-            eV0_eV = 1.0
-        self.dtable = self.dtable_eV / eV0_eV
+        self.q_e = self.phys["q_e"]
+        self.eV0 = self.phys["scales"]["eV0_J"] / self.q_e    #about 0.026
+        self.conc0 = self.phys["scales"]["conc0"]
+
+        self.dtable = self.dtable_eV /self.eV0
         self.mtab = max(1, int(self.energy_max_eV / self.dtable_eV + 0.5))
-        self.mwle_ana = 4000
-        self.dlist = 0.0
 
         self.analytic_ntlist = None
         self.analytic_ptlist = None
         self.analytic_tlist = None
+        self.analytic_wcdf = None
+        self.analytic_wsum = None
+        self.analytic_nonempty_bins = None
+        self.analytic_num_bins = 0
+        self.analytic_bin_edges_eV = None
+        self.analytic_bin_piecewise = None
 
         self.material = self.phys["material"]
         self.ek_file_override = f"bands_{self.material}.txt"
@@ -58,44 +63,44 @@ class AnalyticBand:
         print("[Band] Initializing Analytic Band Structure framework...")
 
     def initialize(self, output_root: str | None = None) -> None:
-        if self.ek_data["k"] is None:
-            self.read_analytic_data(ek_file_override=self.ek_file_override)
-        self.init_valley_configuration()
-        self.init_axis_lookup_table()
-        self.build_analytic_lists()
+        if self.ek_data["k_norm"] is None:
+            self.read_analytic_data(ek_file_override=self.ek_file_override) #√
+        self.init_valley_configuration() #√
+        self.init_axis_lookup_table() #O 判断kid用的
+        self.build_analytic_lists() #√
         self.init_phonon_spectrum()
         self.build_analytic_scattering_table(output_root=output_root)
         self.init_derived_constants()
 
     def read_analytic_data(self, ek_file_override: str | None = None) -> None:
-        # 1. DOS table
-        dos_filename = f"analytic_dos{self.material}.txt"
+        # 1. DOS table 检查完毕
+        dos_filename = f"DOS_{self.material}.txt"
         dos_path = os.path.join(self.input_path, dos_filename)
         if os.path.exists(dos_path):
             print(f"[Band] Reading DOS data from: {dos_path}")
             raw_dos = np.loadtxt(dos_path, skiprows=1)
 
-            self.dos_table = np.zeros(self.mtab + 1, dtype=float)
+            self.dos_norm = np.zeros(self.mtab + 1, dtype=float)
 
-            q_e = self.phys["q_e"]
-            eV0 = self.phys["scales"]["eV0_J"] / q_e
-            conc0 = self.phys["scales"]["conc0"]
+            #q_e = self.phys["q_e"]
+            #eV0 = self.phys["scales"]["eV0_J"] / q_e
+            #conc0 = self.phys["scales"]["conc0"]
             if raw_dos.shape[1] < 2:
                 raise ValueError(f"[Band] DOS file {dos_path} must have at least 2 columns (E, DOS).")
             E_eV = raw_dos[:, 0]
             dos_real = raw_dos[:, 1]
             # DOS_norm = DOS_real[1/eV/m^3] * eV0[eV] / conc0[1/m^3]
-            dos_norm = dos_real * eV0 / conc0
-            E_norm = E_eV / eV0
+            dos_norm_table = dos_real * self.eV0 / self.conc0
+            E_norm = E_eV / self.eV0
             itab = ((E_norm - self.emin) / self.dtable + 0.5).astype(int) #dos的能量柱序号
 
             valid_mask = (itab >= 0) & (itab <= self.mtab)
-            self.dos_table[itab[valid_mask]] = dos_norm[valid_mask] #实际算出来的和dos_norm一样
-            print(f"      -> DOS table loaded. Max DOS: {np.max(self.dos_table / eV0 * conc0):.4e} eV^-1 m^-3")
+            self.dos_norm[itab[valid_mask]] = dos_norm_table[valid_mask] #实际算出来的和dos_norm一样
+            print(f"      -> DOS table loaded. Max DOS: {np.max(self.dos_norm / self.eV0 * self.conc0):.4e} eV^-1 m^-3")
         else:
             print(f"      [Warning] DOS file {dos_path} not found.")
 
-        # 2. E-k-v table
+        # 2. E-k-v table 检查完毕
         ek_filename = ek_file_override
         ek_path = os.path.join(self.input_path, ek_filename)
         if not os.path.exists(ek_path):
@@ -104,50 +109,101 @@ class AnalyticBand:
         print(f"[Band] Reading E-k data from: {ek_path}")
         data = np.loadtxt(ek_path, skiprows=1)
 
-        kx_pi, ky_pi, kz_pi = data[:, 0], data[:, 1], data[:, 2]
-        E_eV_in = data[:, 3]
-        vx_si, vy_si, vz_si = data[:, 4], data[:, 5], data[:, 6]
+        kx_pi, ky_pi, kz_pi = data[:, 0], data[:, 1], data[:, 2]  #单位pi/a
+        E_eV_in = data[:, 3]   #单位eV
+        vx_si, vy_si, vz_si = data[:, 4], data[:, 5], data[:, 6]  #单位m/s
 
-        if "sia0_norm" in self.phys:
-            k_scale = np.pi / self.phys["sia0_norm"]
-        else:
-            k_scale = 1.0
-            print("      [Warning] sia0_norm missing, using raw k-vectors.")
-        self.ek_data["k"] = np.column_stack((kx_pi, ky_pi, kz_pi)) * k_scale
+        self.ek_data["k_pi"] = np.column_stack((kx_pi, ky_pi, kz_pi))
+        k_scale = np.pi / self.phys["sia0_norm"]
+        self.ek_data["k_norm"] = np.column_stack((kx_pi, ky_pi, kz_pi)) * k_scale
 
-        q_e = self.phys["q_e"]
-        eV0 = self.phys["scales"]["eV0_J"] / q_e
-        self.ek_data["energy"] = E_eV_in / eV0
+        #q_e = self.phys["q_e"]
+        #eV0 = self.phys["scales"]["eV0_J"] / q_e
+        self.ek_data["energy_eV"] = E_eV_in
 
-        v_scale = 1.0 / self.phys["scales"]["velo0"]
-        self.ek_data["velocity"] = np.column_stack((vx_si, vy_si, vz_si)) * v_scale
+        #v_scale = 1.0 / self.phys["scales"]["velo0"]
+        self.ek_data["velocity_real"] = np.column_stack((vx_si, vy_si, vz_si))
 
-        step_x = self._detect_grid_step(kx_pi)
-        step_y = self._detect_grid_step(ky_pi)
-        step_z = self._detect_grid_step(kz_pi)
-        weight_val = step_x * step_y * step_z
-        self.ek_data["weight"] = np.full(len(E_eV_in), weight_val)
-
+        wx = self._compute_axis_cell_widths(kx_pi)
+        wy = self._compute_axis_cell_widths(ky_pi)
+        wz = self._compute_axis_cell_widths(kz_pi)
+        self.ek_data["weight"] = wx * wy * wz
+        # 目前不需要
         valley_idx = np.full(len(E_eV_in), 2, dtype=int)
-        valley_idx[np.abs(kx_pi) > 1.5] = 0
-        valley_idx[np.abs(ky_pi) > 1.5] = 1
+        #valley_idx[np.abs(kx_pi) > 1.5] = 0
+        #valley_idx[np.abs(ky_pi) > 1.5] = 1
         self.ek_data["valley_idx"] = valley_idx
 
         print(f"      -> E-k table loaded. Points: {len(E_eV_in)}")
-        print(
-            f"      -> Grid step detected: dx={step_x:.3f}, dy={step_y:.3f}, dz={step_z:.3f} (pi/a units)"
-        )
+        #意义不大先注释
+        #print(
+        #    "      -> Grid step sets (pi/a): "
+        #    f"dx={self._format_step_values(self._detect_grid_step_stats(kx_pi))}, "
+        #    f"dy={self._format_step_values(self._detect_grid_step_stats(ky_pi))}, "
+        #    f"dz={self._format_step_values(self._detect_grid_step_stats(kz_pi))}"
+        #)
 
-    def _detect_grid_step(self, arr_pi: np.ndarray) -> float:
-        unique_vals = np.unique(np.abs(arr_pi))
-        if len(unique_vals) > 1:
-            diffs = np.diff(unique_vals)
-            valid_diffs = diffs[diffs > 1e-6]
-            if len(valid_diffs) > 0:
-                return float(np.min(valid_diffs))
-        return 1.0
+    def _detect_grid_step_stats(self, arr_pi: np.ndarray) -> np.ndarray:
+        """
+        Detect distinct grid steps on one axis.
+        1) Sort unique ticks.
+        2) Compute adjacent diffs.
+        3) Keep unique diffs and merge numerically-close values.
+        """
+        ticks = np.unique(np.round(arr_pi.astype(float), decimals=12))
+        if ticks.size <= 1:
+            return np.array([1.0], dtype=float)
 
+        ticks.sort()
+        diffs = np.diff(ticks)
+        valid_diffs = diffs[diffs > 1e-12]
+        if valid_diffs.size == 0:
+            return np.array([1.0], dtype=float)
 
+        unique_diffs = np.unique(np.round(valid_diffs, decimals=12))
+        unique_diffs.sort()
+
+        merged = [float(unique_diffs[0])]
+        for d in unique_diffs[1:]:
+            if np.isclose(d, merged[-1], rtol=1e-6, atol=1e-12):
+                continue
+            merged.append(float(d))
+        return np.asarray(merged, dtype=float)
+
+    def _format_step_values(self, steps: np.ndarray) -> str:
+        return "[" + ", ".join(f"{v:.6g}" for v in steps) + "]"
+
+    def _compute_axis_cell_widths(self, arr_pi: np.ndarray) -> np.ndarray:
+        """
+        Per-point cell width for non-uniform 1D grids using midpoint boundaries.
+        If axis has N sampled k-values, construct N+1 boundaries as:
+        [k0, (k0+k1)/2, ..., (k_{N-2}+k_{N-1})/2, k_{N-1}],
+        then widths are boundary differences (size N).
+        """
+        arr_round = np.round(arr_pi.astype(float), decimals=12)
+        ticks, inv = np.unique(arr_round, return_inverse=True)
+        ticks = np.sort(ticks)
+        if ticks.size <= 1:
+            return np.ones_like(arr_pi, dtype=float)
+
+        boundaries = self._build_axis_boundaries(ticks)
+        widths_per_tick = np.diff(boundaries)
+
+        return widths_per_tick[inv]
+
+    def _build_axis_boundaries(self, ticks: np.ndarray) -> np.ndarray:
+        """Build midpoint boundaries from sorted ticks (units unchanged)."""
+        ticks = np.asarray(ticks, dtype=float)
+        if ticks.size <= 0:
+            raise ValueError("[Error] Empty ticks for boundary construction.")
+        boundaries = np.empty(ticks.size + 1, dtype=float)
+        boundaries[0] = ticks[0]
+        boundaries[-1] = ticks[-1]
+        if ticks.size > 1:
+            boundaries[1:-1] = 0.5 * (ticks[:-1] + ticks[1:])
+        return boundaries
+
+    #波谷定义，目前不太需要
     def init_valley_configuration(self) -> None:
         mat = self.phys["material"]
         if mat == "IGZO":
@@ -159,107 +215,150 @@ class AnalyticBand:
 
     def init_axis_lookup_table(self) -> None:
         """
-        Build full-range (-K to +K) axis lookup map and a signed velocity table.
+        Build axis lookup table in kx units of (pi/a).
         """
-        if self.ek_data["k"] is None:
+        if self.ek_data["k_pi"] is None:
             raise ValueError("[Error] Critical: E-k data must be loaded before building lookup table.")
 
-        print("[Band] Building Full-Range Axis Lookup Table & Velocity Map...")
+        print("[Band] Building Axis Lookup Table & Velocity Map (k in pi/a)...")
 
-        raw_kx = self.ek_data["k"][:, 0]
-        raw_vx = self.ek_data["velocity"][:, 0]
+        raw_kx = self.ek_data["k_pi"][:, 0]
+        raw_vx = self.ek_data["velocity_real"][:, 0]
 
-        unique_abs_k = np.unique(np.round(np.abs(raw_kx), decimals=6))
-        negative_ticks = -np.flip(unique_abs_k[unique_abs_k > 0])
-        self.ticks = np.concatenate((negative_ticks, unique_abs_k))
-
-        self.num_ticks = int(len(self.ticks))
+        kx_round = np.round(raw_kx.astype(float), decimals=12)
+        self.ticks = np.unique(kx_round)
+        self.num_ticks = int(self.ticks.size)
         if self.num_ticks == 0:
             raise ValueError("[Error] No K ticks detected from E-k data.")
+        self.ticks.sort()
 
-        print(f"      -> Generated {self.num_ticks} symmetric grid ticks.")
-        # print(f"      -> Range: [{self.ticks[0]:.4f}, {self.ticks[-1]:.4f}] (pi/a units)") 这打印的是归一化的值，避免歧义去掉打印
+        # Cell boundaries in pi/a: [k0, mid01, ..., mid(n-2,n-1), k_{n-1}]
+        self.tick_boundaries = self._build_axis_boundaries(self.ticks)
 
-        self.velocity_table = np.zeros(self.num_ticks)
-        sort_indices = np.argsort(np.abs(raw_kx))
-        sorted_abs_k = np.abs(raw_kx)[sort_indices]
-        sorted_abs_v = np.abs(raw_vx)[sort_indices]
+        # Build vx lookup aligned with self.ticks (average vx on repeated kx points).
+        self.velocity_table = np.zeros(self.num_ticks, dtype=float)
+        sort_idx = np.argsort(kx_round)
+        k_sorted = kx_round[sort_idx]
+        v_sorted = raw_vx[sort_idx]
+        uniq_k, start_idx = np.unique(k_sorted, return_index=True)
+        for i, start in enumerate(start_idx):
+            end = start_idx[i + 1] if i + 1 < start_idx.size else k_sorted.size
+            self.velocity_table[i] = float(np.mean(v_sorted[start:end]))
 
-        abs_v_on_ticks = np.interp(np.abs(self.ticks), sorted_abs_k, sorted_abs_v)
-        self.velocity_table = abs_v_on_ticks * np.sign(self.ticks)
-        print("      -> Velocity table populated with signed values.")
-
-        max_k = float(np.max(unique_abs_k))
-        self.k_map_max = max_k * 1.01
-        self.k_map_min = -self.k_map_max
-        self.k_map_res = 0.001
-        self.k_map_scale = 1.0 / self.k_map_res
-
-        map_size = int((self.k_map_max - self.k_map_min) * self.k_map_scale) + 1
-        k_query = self.k_map_min + np.arange(map_size) * self.k_map_res
-
-        idx_candidates = np.searchsorted(self.ticks, k_query)
-        idx_candidates = np.clip(idx_candidates, 1, self.num_ticks - 1)
-
-        val_upper = self.ticks[idx_candidates]
-        val_lower = self.ticks[idx_candidates - 1]
-
-        mask_closer_to_lower = (np.abs(k_query - val_lower)) < (np.abs(val_upper - k_query))
-        final_indices = np.where(mask_closer_to_lower, idx_candidates - 1, idx_candidates)
-
-        self.axis_map = final_indices.astype(np.int32)
-        print(f"      -> Lookup Map built. Size: {map_size}, Resolution: {self.k_map_res}")
+        print(
+            f"      -> Generated {self.num_ticks} kx ticks in pi/a. "
+            f"Range: [{self.ticks[0]:.4f}, {self.ticks[-1]:.4f}]"
+        )
+        print("      -> Boundaries and velocity table built on pi/a axis.")
 
     def get_axis_indices_vectorized(self, k_values: np.ndarray) -> np.ndarray:
         """
-        Vectorized lookup for k-axis indices using precomputed axis_map.
+        Vectorized lookup for k-axis indices.
+        Input k_values must be in units of pi/a.
         """
-        if not hasattr(self, "axis_map"):
-            raise ValueError("[Error] axis_map is not initialized.")
+        if not hasattr(self, "tick_boundaries"):
+            raise ValueError("[Error] tick_boundaries is not initialized.")
         if not np.all(np.isfinite(k_values)):
             raise ValueError("[Error] Non-finite k_values detected.")
-        map_idx_float = (k_values - self.k_map_min) * self.k_map_scale
-        map_idx_float = np.clip(map_idx_float, 0, self.axis_map.size - 1)
-        map_idx = map_idx_float.astype(np.int32)
-        return self.axis_map[map_idx]
+        idx = np.searchsorted(self.tick_boundaries, k_values, side="right") - 1
+        idx = np.clip(idx, 0, self.num_ticks - 1)
+        return idx.astype(np.int32)
 
     def build_analytic_lists(self, debug_output_path: str | None = None) -> None:
         """
         Build energy-bin lookup lists for fast E -> k-index mapping.
         """
-        if self.ek_data["energy"] is None:
+        if self.ek_data["energy_eV"] is None:
             raise ValueError("[Error] E-k energy data is missing.")
 
         print("[Band] Building Analytic Lists (Energy Binning)...")
 
         q_e = self.phys["q_e"]
         eV0 = self.phys["scales"]["eV0_J"] / q_e
-        if self.dlist <= 0.0:
-            target_res_eV = 0.002
-            self.dlist = eV0 / target_res_eV
-        print(f"      -> Energy bin resolution: 2 meV (dlist={self.dlist:.2f})")
+        energies_eV = self.ek_data["energy_eV"]
 
-        energies = self.ek_data["energy"]
-        bin_indices = ((energies - self.emin) * self.dlist).astype(np.int32)
+        # Piecewise energy bins:
+        #   [emin, esplit) -> de_low
+        #   [esplit, emax] -> de_high
+        e_min = float(self.phys.get("init_energy_bin_min_eV", 0.0))
+        e_split = float(self.phys.get("init_energy_bin_split_eV", 0.05))
+        de_low = float(self.phys.get("init_energy_bin_step_low_eV", 0.0001))
+        de_high = float(self.phys.get("init_energy_bin_step_high_eV", 0.002))
+        e_max = float(self.phys.get("init_energy_bin_max_eV", 8.0))
+        if not (de_low > 0.0 and de_high > 0.0):
+            raise ValueError("Energy bin steps must be > 0.")
+        if not (e_min <= e_split < e_max):
+            raise ValueError("Energy bin bounds must satisfy e_min <= e_split < e_max.")
 
-        max_idx = int(np.max(bin_indices)) if len(bin_indices) > 0 else 0
-        if max_idx >= self.mwle_ana:
-            print(f"      [Warning] Expanding MWLE_ana to {max_idx + 1}.")
-            self.mwle_ana = max_idx + 1
+        low_edges = np.arange(e_min, e_split + 0.5 * de_low, de_low, dtype=float)
+        high_edges = np.arange(e_split + de_high, e_max + 0.5 * de_high, de_high, dtype=float)
+        edges_eV = np.concatenate((low_edges, high_edges))
+        if edges_eV[-1] < e_max - 1e-12:
+            edges_eV = np.append(edges_eV, e_max)
 
-        valid_mask = (bin_indices >= 0) & (bin_indices < self.mwle_ana)
+        self.analytic_bin_edges_eV = edges_eV
+        self.analytic_num_bins = int(edges_eV.size - 1)
+        self.analytic_bin_piecewise = (
+            e_min,
+            e_split,
+            de_low,
+            de_high,
+            int(low_edges.size - 1),
+        )
+
+        print(
+            "      -> Piecewise bins: "
+            f"[{e_min},{e_split}] step={de_low:g} eV, "
+            f"({e_split},{e_max}] step={de_high:g} eV, total={self.analytic_num_bins}"
+        )
+
+        bin_indices = self.map_energy_to_bins(energies_eV)
+        valid_mask = np.isfinite(energies_eV)
         valid_bins = bin_indices[valid_mask]
 
-        self.analytic_ntlist = np.bincount(valid_bins, minlength=self.mwle_ana)
-        self.analytic_ptlist = np.zeros(self.mwle_ana, dtype=np.int32)
+        self.analytic_ntlist = np.bincount(valid_bins, minlength=self.analytic_num_bins)
+        self.analytic_ptlist = np.zeros(self.analytic_num_bins, dtype=np.int32)
         cumsum = np.cumsum(self.analytic_ntlist)
-        if self.mwle_ana > 1:
+        if self.analytic_num_bins > 1:
             self.analytic_ptlist[1:] = cumsum[:-1]
 
         valid_indices = np.nonzero(valid_mask)[0]
         self.analytic_tlist = valid_indices[np.argsort(valid_bins, kind="stable")].astype(np.int32)
 
-        print(f"      -> Indexed {len(energies)} states into {self.mwle_ana} bins.")
+        # Build per-bin weighted CDF for k-state sampling.
+        weights_all = self.ek_data.get("weight", None)  
+        if weights_all is None:
+            weights_all = np.ones_like(self.ek_data["energy_eV"], dtype=np.float64)
+        else:
+            weights_all = np.asarray(weights_all, dtype=np.float64)
+
+        self.analytic_wcdf = np.zeros_like(self.analytic_tlist, dtype=np.float64)
+        self.analytic_wsum = np.zeros(self.analytic_num_bins, dtype=np.float64)
+        for ib in range(self.analytic_num_bins):
+            count = int(self.analytic_ntlist[ib])
+            if count <= 0:
+                continue
+            start = int(self.analytic_ptlist[ib])
+            end = start + count
+            idx_slice = self.analytic_tlist[start:end]
+            w_slice = weights_all[idx_slice]
+            w_slice = np.where(w_slice > 0.0, w_slice, 0.0)
+
+            cdf = np.cumsum(w_slice)
+            total_w = float(cdf[-1]) if cdf.size > 0 else 0.0
+            if total_w <= 0.0:
+                # Fallback to uniform sampling for this bin.
+                cdf = np.arange(1, count + 1, dtype=np.float64)
+                total_w = float(count)
+
+            self.analytic_wcdf[start:end] = cdf
+            self.analytic_wsum[ib] = total_w
+
+        self.analytic_nonempty_bins = np.flatnonzero(self.analytic_ntlist > 0).astype(np.int32)
+        print(
+            f"      -> Indexed {len(energies_eV)} states into {self.analytic_num_bins} bins "
+            f"(non-empty: {self.analytic_nonempty_bins.size})."
+        )
 
         if debug_output_path:
             self._write_debug_bins(debug_output_path, eV0)
@@ -269,19 +368,48 @@ class AnalyticBand:
         print(f"      [Debug] Dumping bin stats to: {filename}")
 
         empty_bins = 0
-        total_bins = self.mwle_ana
+        total_bins = self.analytic_num_bins
         with open(filename, "w", encoding="utf-8") as f:
             f.write("Bin_Index Energy_Min(eV) Energy_Max(eV) Count Start_Index\n")
             for i in range(total_bins):
                 count = int(self.analytic_ntlist[i])
                 if count == 0:
                     empty_bins += 1
-                e_min_eV = (i / self.dlist + self.emin) * eV0
-                e_max_eV = ((i + 1) / self.dlist + self.emin) * eV0
+                e_min_eV = self.analytic_bin_edges_eV[i]
+                e_max_eV = self.analytic_bin_edges_eV[i + 1]
                 start_idx = int(self.analytic_ptlist[i])
                 f.write(f"{i} {e_min_eV:.5f} {e_max_eV:.5f} {count} {start_idx}\n")
 
         print(f"      [Debug] Total Bins: {total_bins}, Empty Bins: {empty_bins}")
+
+    def map_energy_to_bins(self, energies_eV: np.ndarray) -> np.ndarray:
+        """
+        Map energies (eV) to analytic bin indices.
+        Uses O(1) piecewise arithmetic mapping when piecewise settings exist.
+        """
+        if self.analytic_bin_edges_eV is None or self.analytic_num_bins <= 0:
+            raise ValueError("[Error] Energy bin edges are not initialized.")
+
+        energies = np.asarray(energies_eV, dtype=float)
+        out = np.zeros(energies.shape, dtype=np.int32)
+        finite = np.isfinite(energies)
+        if not np.any(finite):
+            return out
+
+        e = energies[finite]
+        if self.analytic_bin_piecewise is not None:
+            e_min, e_split, de_low, de_high, n_low = self.analytic_bin_piecewise
+            idx = np.empty(e.shape, dtype=np.int64)
+            low_mask = e < e_split
+            idx[low_mask] = np.floor((e[low_mask] - e_min) / de_low + 1e-12).astype(np.int64)
+            idx[~low_mask] = n_low + np.floor((e[~low_mask] - e_split) / de_high + 1e-12).astype(np.int64)
+            idx = np.clip(idx, 0, self.analytic_num_bins - 1)
+        else:
+            idx = np.searchsorted(self.analytic_bin_edges_eV, e, side="right") - 1
+            idx = np.clip(idx, 0, self.analytic_num_bins - 1)
+
+        out[finite] = idx.astype(np.int32)
+        return out
 
     def init_phonon_spectrum(self) -> None:
         """

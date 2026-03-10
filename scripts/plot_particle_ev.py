@@ -46,24 +46,34 @@ def main() -> int:
     hbar = 1.054571e-34
     q_e = 1.602176e-19
 
-    m_eff = (args.ml * args.mt * args.mt) ** (1.0 / 3.0) * m0
+    m_t = args.mt * m0
+    m_l = args.ml * m0
 
-    k_scale = 2 * np.pi / args.a0
-    k_mag = np.sqrt(kx * kx + ky * ky + kz * kz) * k_scale
+    # Input k is in (pi/a), so physical wavevector is k_real = k * (pi/a0).
+    k_scale = np.pi / args.a0
+    kx_real = kx * k_scale
+    ky_real = ky * k_scale
+    kz_real = kz * k_scale
 
-    v_mag = hbar * k_mag / m_eff
+    vx = hbar * kx_real / m_t
+    vy = hbar * ky_real / m_t
+    vz = hbar * kz_real / m_l
+    v_mag = np.sqrt(vx * vx + vy * vy + vz * vz)
 
     e_min = float(np.min(energy_eV))
     e_max = float(np.max(energy_eV))
-    e_line = np.linspace(e_min, e_max, 400)
-    v_line = np.sqrt(2.0 * e_line * q_e / m_eff)
+    e0 = max(0.0, e_min)
+    e_line = np.linspace(e0, e_max, 400) if e_max > e0 else np.array([e0])
+    v_line_ml = np.sqrt(2.0 * e_line * q_e / m_l)
+    v_line_mt = np.sqrt(2.0 * e_line * q_e / m_t)
 
     plt.figure(figsize=(7.0, 5.0))
     plt.scatter(energy_eV, v_mag, s=2, alpha=0.25, label="MC samples")
-    plt.plot(e_line, v_line, color="red", linewidth=2.0, label="E=1/2 m v^2")
+    plt.plot(e_line, v_line_ml, color="red", linewidth=2.0, label="E=1/2 ml v^2")
+    plt.plot(e_line, v_line_mt, color="blue", linewidth=2.0, label="E=1/2 mt v^2")
     plt.xlabel("Energy (eV)")
     plt.ylabel("Velocity (m/s)")
-    plt.title("E-v Scatter vs Analytic")
+    plt.title("E-v Scatter vs Analytic (ml/mt)")
     plt.grid(True, linestyle="--", alpha=0.4)
     plt.legend()
     plt.tight_layout()

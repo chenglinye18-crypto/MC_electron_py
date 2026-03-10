@@ -11,13 +11,40 @@ from numba import njit, prange
 
 
 @njit(parallel=True, fastmath=True)
-def _select_k_from_bins(n, bins, ntlist, ptlist, tlist, k_data, kx_out, ky_out, kz_out, k_idx_out):
+def _select_k_from_bins(
+    n,
+    bins,
+    ntlist,
+    ptlist,
+    tlist,
+    wcdf,
+    wsum,
+    k_data,
+    kx_out,
+    ky_out,
+    kz_out,
+    k_idx_out,
+):
     for i in prange(n):
         itab = bins[i]
         count = ntlist[itab]
         if count > 0:
-            offset = np.random.randint(0, count)
-            k_idx = tlist[ptlist[itab] + offset]
+            start = ptlist[itab]
+            total_w = wsum[itab]
+            if total_w > 0.0:
+                target = np.random.random() * total_w
+                left = 0
+                right = count - 1
+                while left < right:
+                    mid = (left + right) // 2
+                    if wcdf[start + mid] < target:
+                        left = mid + 1
+                    else:
+                        right = mid
+                offset = left
+            else:
+                offset = np.random.randint(0, count)
+            k_idx = tlist[start + offset]
         else:
             k_idx = 0
         k_idx_out[i] = k_idx
@@ -32,9 +59,10 @@ def _sample_thermal_k(n_particles, temperature, kb, q_e, band_struct):
     Returns kx, ky, kz (code units), energy (eV), and ek_data indices.
     """
     kBT = (kb * temperature) / q_e
-    eV0_eV = band_struct.phys["scales"]["eV0_J"] / q_e
-    e_max_norm = (band_struct.mwle_ana - 1) / band_struct.dlist + band_struct.emin
-    e_max_eV = e_max_norm * eV0_eV
+    if getattr(band_struct, "analytic_bin_edges_eV", None) is None:
+        raise ValueError("Energy-bin edges are not initialized.")
+    bin_edges_eV = band_struct.analytic_bin_edges_eV
+    e_max_eV = float(bin_edges_eV[-1])
     if e_max_eV <= 0.0:
         raise ValueError("Invalid maximum energy for sampling.")
 
@@ -42,25 +70,39 @@ def _sample_thermal_k(n_particles, temperature, kb, q_e, band_struct):
     exp_term = np.exp(-e_max_eV / kBT)
     energy = -kBT * np.log(1.0 - r * (1.0 - exp_term))
 
-    e_norm = energy / eV0_eV
-    bin_indices = ((e_norm - band_struct.emin) * band_struct.dlist).astype(np.int32)
-    bin_indices = np.clip(bin_indices, 0, band_struct.mwle_ana - 1)
+    bin_indices = band_struct.map_energy_to_bins(energy)
 
     ntlist = band_struct.analytic_ntlist  #能量位于哪一个能量bin
-    if np.any(ntlist[bin_indices] <= 0):
-        raise ValueError("Empty energy bin encountered during k sampling.")
+    empty_mask = ntlist[bin_indices] <= 0
+    if np.any(empty_mask):
+        nonempty_bins = band_struct.analytic_nonempty_bins
+        if nonempty_bins is None or nonempty_bins.size == 0:
+            raise ValueError("All energy bins are empty; cannot sample k states.")
+
+        targets = bin_indices[empty_mask]
+        pos = np.searchsorted(nonempty_bins, targets)
+        left_idx = np.clip(pos - 1, 0, nonempty_bins.size - 1)
+        right_idx = np.clip(pos, 0, nonempty_bins.size - 1)
+        left_bins = nonempty_bins[left_idx]
+        right_bins = nonempty_bins[right_idx]
+        choose_right = np.abs(right_bins - targets) < np.abs(targets - left_bins)
+        bin_indices[empty_mask] = np.where(choose_right, right_bins, left_bins)
+
+    if band_struct.analytic_wcdf is None or band_struct.analytic_wsum is None:
+        raise ValueError("Weighted k-sampling tables are not initialized.")
 
     kx = np.empty(n_particles, dtype=np.float64)
     ky = np.empty(n_particles, dtype=np.float64)
     kz = np.empty(n_particles, dtype=np.float64)
     k_idx = np.empty(n_particles, dtype=np.int64)
-    _select_k_from_bins(
-        n_particles,
+    _select_k_from_bins(n_particles,
         bin_indices,
         band_struct.analytic_ntlist,
         band_struct.analytic_ptlist,
         band_struct.analytic_tlist,
-        band_struct.ek_data["k"],
+        band_struct.analytic_wcdf,
+        band_struct.analytic_wsum,
+        band_struct.ek_data["k_norm"],
         kx,
         ky,
         kz,
@@ -125,7 +167,7 @@ class Particle:
         kb = phys_config["kb"]
         q_e = phys_config["q_e"]
 
-        kx, ky, kz, energy, _k_idx = _sample_thermal_k(cell_indices.size, temperature, kb, q_e, band_struct)
+        kx, ky, kz, energy, _k_idx = _sample_thermal_k(cell_indices.size, temperature, kb, q_e, band_struct)  #归一化
 
         to_pi = phys_config["sia0_norm"] / np.pi
         kx_idx = band_struct.get_axis_indices_vectorized(kx * to_pi)
@@ -157,12 +199,14 @@ class Particle:
         if export_flag not in (0, 1):
             raise ValueError("export_particles must be 0 or 1.")
         if export_flag == 1:
-            self._export_particles(output_root)
+            self._export_particles(output_root, phys_config)
 
-    def _export_particles(self, output_root: str) -> None:
+    def _export_particles(self, output_root: str, phys_config) -> None:
         particle_dir = os.path.join(output_root, "Particles")
         os.makedirs(particle_dir, exist_ok=True)
         out_path = os.path.join(particle_dir, "initial_particles.txt")
+
+        k_scale = np.pi / phys_config["sia0_norm"]
 
         data = np.column_stack(
             (
@@ -173,9 +217,9 @@ class Particle:
                 self.x,
                 self.y,
                 self.z,
-                self.kx,
-                self.ky,
-                self.kz,
+                self.kx/k_scale,
+                self.ky/k_scale,
+                self.kz/k_scale,
                 self.energy,
                 self.charge,
                 self.kx_idx,
@@ -183,7 +227,7 @@ class Particle:
                 self.kz_idx,
             )
         )
-        header = "ID i j k x y z kx ky kz energy_eV charge kx_idx ky_idx kz_idx"
-        fmt = ["%d", "%d", "%d", "%d"] + ["%.6e"] * 8 + ["%d", "%d", "%d"]
+        header = "ID i j k     x(m)         y(m)          z(m)       kx(pi/a)  ky(pi/a)  kz(pi/a)   energy_eV   charge(/q)    kx_idx ky_idx kz_idx"
+        fmt = ["%d", "%d", "%d", "%d"] + ["%.6e"] * 3 + ["%.3e"] * 3 + ["%.6e"] * 2 + ["%d", "%d", "%d"]
         np.savetxt(out_path, data, header=header, fmt=fmt)
         print(f"      -> Exported particle data to: {out_path}")

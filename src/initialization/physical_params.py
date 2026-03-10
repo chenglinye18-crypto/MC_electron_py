@@ -73,8 +73,9 @@ def init_physical_parameters(params, materials_found):
     if primary_mat == "IGZO":
         # IGZO specific parameters
         psi_real = 4.16     # Electron Affinity for IGZO
-        # Lattice constant calculation: a = 9.6 * sqrt(3) * 1e-10
-        sia0_real = 9.6 * np.sqrt(3.0) / 2 * 1.0e-10
+        # Lattice constant calculation: a = 9.6 * sqrt(3)/2 * 1e-10 
+        # 周期性为2pi，故k空间取值范围为[-pi/a, pi/a]，具体可以看日志说明
+        sia0_real = 8.313845876e-10
         sirho_real = 6.10e3
         siul_real = 6.00e3
         siut_real = 6.00e3
@@ -139,9 +140,10 @@ def init_physical_parameters(params, materials_found):
         "ml_val": ml_val,
         "mt_val": mt_val,
         "Nc_real": Nc_real,
+        "sia0_real":sia0_real,
 
         # Normalized Bulk Parameters
-        "sia0_norm": sia0_real / spr0,
+        "sia0_norm": sia0_real / spr0,   #晶格常数归一化
         "sirho_norm": sirho_real / dens0,
         "siul_norm": siul_real / velo0,
         "siut_norm": siut_real / velo0,
@@ -162,7 +164,7 @@ def init_physical_parameters(params, materials_found):
         "Nc_norm": Nc_norm,
 
         # Coefficients
-        "a0pi_norm": (2.0 * PI) / (sia0_real / spr0),
+        "a0pi_norm": PI / (sia0_real / spr0),    #k空间归一化
         "QuantumPotentialCoef_norm": (hq0 ** 2 * ec0)
         / (12.0 * 0.26 * em0 * spr0 ** 2 * pot0),
     }

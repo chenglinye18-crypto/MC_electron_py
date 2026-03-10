@@ -8,6 +8,7 @@ Output format matches existing bands_IGZO.txt:
 
 Model: isotropic parabolic band (E = hbar^2 k^2 / (2 m_eff)).
 Velocity: v = (1/hbar) dE/dk = hbar * k / m_eff.
+生成IGZO表格
 """
 from __future__ import annotations
 
@@ -109,14 +110,22 @@ def main() -> int:
         for kx in kx_vals:
             for ky in ky_vals:
                 for kz in kz_vals:
-                    kx_si = kx * k_scale
-                    ky_si = ky * k_scale
-                    kz_si = kz * k_scale
-                    k2 = kx_si * kx_si + ky_si * ky_si + kz_si * kz_si
-                    energy_eV = (hbar * hbar * k2) / (2.0 * m_eff * q_e)
-                    vx = hbar * kx_si / m_eff
-                    vy = hbar * ky_si / m_eff
-                    vz = hbar * kz_si / m_eff
+                
+                    kx_real = kx * k_scale
+                    ky_real = ky * k_scale
+                    kz_real = kz * k_scale
+        
+                    vx = hbar * kx_real / (mt*m0)
+                    vy = hbar * ky_real / (mt*m0)
+                    vz = hbar * kz_real / (ml*m0)
+        
+                    energy = (hbar*hbar/2.0) * (
+                            kx_real*kx_real/(mt*m0)
+                          + ky_real*ky_real/(mt*m0)
+                          + kz_real*kz_real/(ml*m0)
+                    )
+        
+                    energy_eV = energy / q_e
                     f.write(f"{kx:.6f} {ky:.6f} {kz:.6f} {energy_eV:.6f} {vx:.6e} {vy:.6e} {vz:.6e}\n")
 
     print(f"Wrote bands file to: {out_path}")

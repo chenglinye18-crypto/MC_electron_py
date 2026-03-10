@@ -14,5 +14,10 @@ output_dir = ./output
 
 energy_step_eV=0.001
 energy_max_eV=7.0
-InitialConcentrationFile=
+init_energy_bin_min_eV=0.0
+init_energy_bin_split_eV=0.05
+init_energy_bin_step_low_eV=0.0001
+init_energy_bin_step_high_eV=0.002
+init_energy_bin_max_eV=8.0
+InitialConcentrationFile=igzotft_econc_Lg0.2_xsd0.19_ngd1e+16_nga0_Vg2.42_Vd4_Tem300
 export_particles=1

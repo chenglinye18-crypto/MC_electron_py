@@ -102,8 +102,13 @@ def main() -> int:
     # Initialization steps (placeholders)
     print("[STEP 4] Initializing physical parameters")
     phys_config = init_physical_parameters(config, parser.found_semiconductors)
-    phys_config["energy_step_eV"] = float(config["energy_step_eV"])  #为了散射表
-    phys_config["energy_max_eV"] = float(config["energy_max_eV"])   #为了散射表
+    phys_config["energy_step_eV"] = float(config["energy_step_eV"])  #为了散射表,DOS表
+    phys_config["energy_max_eV"] = float(config["energy_max_eV"])   #为了散射表，DOS表
+    phys_config["init_energy_bin_min_eV"] = float(config.get("init_energy_bin_min_eV", 0.0))
+    phys_config["init_energy_bin_split_eV"] = float(config.get("init_energy_bin_split_eV", 0.05))
+    phys_config["init_energy_bin_step_low_eV"] = float(config.get("init_energy_bin_step_low_eV", 0.0001))
+    phys_config["init_energy_bin_step_high_eV"] = float(config.get("init_energy_bin_step_high_eV", 0.002))
+    phys_config["init_energy_bin_max_eV"] = float(config.get("init_energy_bin_max_eV", 8.0))
 
     project_root = os.path.dirname(base_dir)
     output_base = config["output_dir"]
