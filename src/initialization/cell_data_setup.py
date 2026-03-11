@@ -61,7 +61,7 @@ def init_point_data(mesh, phys_config: dict) -> None:
     - distribute each cell volume and net doping*volume to 8 corner nodes (1/8 each),
     - recover node-average doping,
     - compute node built-in potential contribution `vadd = asinh(Nnet/(2*Ni))`,
-    - compute `charge_fac = node_volume * Nc / conc0` (Nc optional for now).
+    - compute `charge_fac_real = node_volume * Nc_real`.
     """
     print("[Init] Initializing point data (cell -> node mapping)...")
 
@@ -83,17 +83,18 @@ def init_point_data(mesh, phys_config: dict) -> None:
     alpha = node_dop / (2.0 * ni_safe)
     mesh.node_vadd = np.arcsinh(alpha)
 
-    # Keep boundary behavior close to legacy code: copy from nearest interior node.
-    if mesh.node_vadd.shape[1] > 2:
-        mesh.node_vadd[:, 0, :] = mesh.node_vadd[:, 1, :]
-        mesh.node_vadd[:, -1, :] = mesh.node_vadd[:, -2, :]
+    # Disabled temporarily per request:
+    # Keep boundary behavior close to legacy code by copying from nearest interior node.
+    # if mesh.node_vadd.shape[1] > 2:
+    #     mesh.node_vadd[:, 0, :] = mesh.node_vadd[:, 1, :]
+    #     mesh.node_vadd[:, -1, :] = mesh.node_vadd[:, -2, :]
 
-    Nc_norm = float(phys_config["Nc_norm"])
-    mesh.node_charge_fac = mesh.node_volume * Nc_norm
+    Nc_real = float(phys_config["Nc_real"])
+    mesh.node_charge_fac_real = mesh.node_volume * Nc_real
 
     print(
         "      -> Point data ready. "
-        f"vadd range: [{np.min(mesh.node_vadd):.4e}, {np.max(mesh.node_vadd):.4e}]"
+        f"vadd range: [{np.min(mesh.node_vadd)*phys_config["scales"]["pot0_V"]:.4e}, {np.max(mesh.node_vadd)*phys_config["scales"]["pot0_V"]:.4e}]"
     )
 
 

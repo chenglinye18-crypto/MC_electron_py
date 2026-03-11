@@ -41,7 +41,7 @@ class Mesh:
         self.node_doping_charge = None
         self.node_doping = None
         self.node_vadd = None
-        self.node_charge_fac = None
+        self.node_charge_fac_real = None
 
     def _assign_materials(self, regions: list) -> None:
         """

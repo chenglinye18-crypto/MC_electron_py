@@ -5,8 +5,8 @@
 
 import argparse
 import os
-import sys
 import time
+
 from utils.parser import InputParser
 from physics.mesh import Mesh
 from physics.band_structure import AnalyticBand
@@ -16,7 +16,7 @@ from initialization import (
     init_cell_data,
     init_point_data,
 )
-from Particle import Particle
+from mc import Monte_Carlo_Simulation
 
 
 def print_banner() -> None:
@@ -26,32 +26,6 @@ def print_banner() -> None:
     print("-    Email:chenglinye18@gmail.com                  -")
     print("-    Version: 1.0.0, 2025-11-01                    -")
     print("----------------------------------------------------")
-
-
-def initialize(config: dict) -> None:
-    """
-    Placeholder for initialization stage.
-    """
-    print("[Init] Base initialization stage (placeholder).")
-
-
-def run_mc(config: dict) -> None:
-    """
-    Placeholder for Monte Carlo main loop.
-    """
-    print("[3/4] Entering MC loop (placeholder)...")
-    total_steps = 10
-    dt_fs = 0.1
-    for step in range(total_steps):
-        if step % 5 == 0:
-            print(f"  Step {step:5d} | Time {step * dt_fs:8.2f} fs")
-
-
-def postprocess(config: dict) -> None:
-    """
-    Placeholder for output stage.
-    """
-    print("[4/4] Post-processing and saving results (placeholder).")
 
 
 def main() -> int:
@@ -99,11 +73,10 @@ def main() -> int:
     mesh = Mesh(coords, device["regions"])
     print(f"  -> Mesh cells       : {mesh.nx} x {mesh.ny} x {mesh.nz}")
 
-    # Initialization steps (placeholders)
     print("[STEP 4] Initializing physical parameters")
     phys_config = init_physical_parameters(config, parser.found_semiconductors)
-    phys_config["energy_step_eV"] = float(config["energy_step_eV"])  #为了散射表,DOS表
-    phys_config["energy_max_eV"] = float(config["energy_max_eV"])   #为了散射表，DOS表
+    phys_config["energy_step_eV"] = float(config["energy_step_eV"])
+    phys_config["energy_max_eV"] = float(config["energy_max_eV"])
     phys_config["init_energy_bin_min_eV"] = float(config.get("init_energy_bin_min_eV", 0.0))
     phys_config["init_energy_bin_split_eV"] = float(config.get("init_energy_bin_split_eV", 0.05))
     phys_config["init_energy_bin_step_low_eV"] = float(config.get("init_energy_bin_step_low_eV", 0.0001))
@@ -121,7 +94,6 @@ def main() -> int:
     print(f"[Main] Output directory created: {output_root}")
 
     print("[STEP 5] Initializing band structure")
-
     bands_dir = os.path.join(project_root, "data", "bands")
     band_struct = AnalyticBand(phys_config, bands_dir)
     band_struct.initialize(output_root=output_root)
@@ -136,18 +108,19 @@ def main() -> int:
     init_point_data(mesh, phys_config)
 
     print("[STEP 7] Initializing Poisson solver")
-    #初始化Poisson求解器，主要构建eps矩阵
     poisson_solver = PoissonSolver(mesh, phys_config, device, build_matrix=True)
 
-    print("[STEP 8] Initializing particle ensemble")
-    _ensemble = Particle(mesh, config, phys_config, band_struct, output_root)
+    monte_carlo_simulation = Monte_Carlo_Simulation(
+        mesh,
+        config,
+        phys_config,
+        band_struct,
+        output_root,
+        poisson_solver=poisson_solver,
+        device_structure=device,
+    )
+    monte_carlo_simulation.run()
 
-    _ = poisson_solver  # placeholder to avoid unused warnings
-    initialize(config)
-    run_mc(config)
-    postprocess(config)
-
-    print(f"End Time: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
     return 0
 
 
