@@ -1568,6 +1568,7 @@ class Monte_Carlo_Simulation:
         self.output_monitor_crossings = np.zeros(0, dtype=np.int64)
         self.output_monitor_step_count = 0
         self.monitor_currents_csv_path: str | None = None
+        self._particle_fly_buffers: dict[str, np.ndarray] = {}
         self.motion_bounds_m = np.zeros((0, 6), dtype=np.float64)
         self.motion_faces = np.zeros(0, dtype=np.int32)
         self.motion_rules = np.zeros(0, dtype=np.int32)
@@ -1973,6 +1974,63 @@ class Monte_Carlo_Simulation:
         self.ek_k_norm_kernel = np.asarray(ek_data.get("k_norm", np.zeros((0, 3))), dtype=np.float64)
         self.ek_k_pi_kernel = np.asarray(ek_data.get("k_pi", np.zeros((0, 3))), dtype=np.float64)
         self.ek_energy_eV_kernel = np.asarray(ek_data.get("energy_eV", zero_1d), dtype=np.float64)
+
+    def _ensure_particle_fly_buffers(self, n_active: int) -> dict[str, np.ndarray]:
+        bufs = self._particle_fly_buffers
+        current_n = int(bufs.get("_n_active", 0)) if bufs else 0
+        if current_n >= n_active:
+            return bufs
+
+        bufs["_n_active"] = int(n_active)
+        bufs["status_out"] = np.empty(n_active, dtype=np.int32)
+        bufs["err_i_out"] = np.empty(n_active, dtype=np.int32)
+        bufs["err_j_out"] = np.empty(n_active, dtype=np.int32)
+        bufs["err_k_out"] = np.empty(n_active, dtype=np.int32)
+        bufs["x_out"] = np.empty(n_active, dtype=np.float64)
+        bufs["y_out"] = np.empty(n_active, dtype=np.float64)
+        bufs["z_out"] = np.empty(n_active, dtype=np.float64)
+        bufs["kx_out"] = np.empty(n_active, dtype=np.float64)
+        bufs["ky_out"] = np.empty(n_active, dtype=np.float64)
+        bufs["kz_out"] = np.empty(n_active, dtype=np.float64)
+        bufs["energy_out"] = np.empty(n_active, dtype=np.float64)
+        bufs["i_out"] = np.empty(n_active, dtype=np.int32)
+        bufs["j_out"] = np.empty(n_active, dtype=np.int32)
+        bufs["k_out"] = np.empty(n_active, dtype=np.int32)
+        bufs["kx_idx_out"] = np.empty(n_active, dtype=np.int32)
+        bufs["ky_idx_out"] = np.empty(n_active, dtype=np.int32)
+        bufs["kz_idx_out"] = np.empty(n_active, dtype=np.int32)
+        bufs["left_time_out"] = np.empty(n_active, dtype=np.float64)
+        bufs["spawn_requested_out"] = np.empty(n_active, dtype=np.bool_)
+        bufs["spawn_x_out"] = np.empty(n_active, dtype=np.float64)
+        bufs["spawn_y_out"] = np.empty(n_active, dtype=np.float64)
+        bufs["spawn_z_out"] = np.empty(n_active, dtype=np.float64)
+        bufs["spawn_kx_out"] = np.empty(n_active, dtype=np.float64)
+        bufs["spawn_ky_out"] = np.empty(n_active, dtype=np.float64)
+        bufs["spawn_kz_out"] = np.empty(n_active, dtype=np.float64)
+        bufs["spawn_energy_out"] = np.empty(n_active, dtype=np.float64)
+        bufs["spawn_kx_idx_out"] = np.empty(n_active, dtype=np.int32)
+        bufs["spawn_ky_idx_out"] = np.empty(n_active, dtype=np.int32)
+        bufs["spawn_kz_idx_out"] = np.empty(n_active, dtype=np.int32)
+        bufs["spawn_left_time_out"] = np.empty(n_active, dtype=np.float64)
+        bufs["spawn_i_out"] = np.empty(n_active, dtype=np.int32)
+        bufs["spawn_j_out"] = np.empty(n_active, dtype=np.int32)
+        bufs["spawn_k_out"] = np.empty(n_active, dtype=np.int32)
+        bufs["catch_stat_inc_out"] = np.empty(n_active, dtype=np.int32)
+        bufs["escape_total_inc_out"] = np.empty(n_active, dtype=np.int32)
+        bufs["escape_xp_out"] = np.empty(n_active, dtype=np.int32)
+        bufs["escape_xm_out"] = np.empty(n_active, dtype=np.int32)
+        bufs["escape_yp_out"] = np.empty(n_active, dtype=np.int32)
+        bufs["escape_ym_out"] = np.empty(n_active, dtype=np.int32)
+        bufs["escape_zp_out"] = np.empty(n_active, dtype=np.int32)
+        bufs["escape_zm_out"] = np.empty(n_active, dtype=np.int32)
+        bufs["step_ph_inc_out"] = np.empty(n_active, dtype=np.int32)
+        bufs["phonon_self_inc_out"] = np.empty(n_active, dtype=np.int32)
+        bufs["phonon_acoustic_inc_out"] = np.empty(n_active, dtype=np.int32)
+        bufs["phonon_opt_abs_inc_out"] = np.empty(n_active, dtype=np.int32)
+        bufs["phonon_opt_ems_inc_out"] = np.empty(n_active, dtype=np.int32)
+        bufs["phonon_absorbed_eV_out"] = np.empty(n_active, dtype=np.float64)
+        bufs["phonon_emitted_eV_out"] = np.empty(n_active, dtype=np.float64)
+        return bufs
 
     @staticmethod
     def _cell_hit_dir_to_face_label(hit_dir: int) -> str | None:
@@ -3307,54 +3365,55 @@ class Monte_Carlo_Simulation:
         if kcell_max is None:
             kcell_max = np.zeros((0, 0, 0), dtype=np.float64)
 
-        status_out = np.empty(n_active, dtype=np.int32)
-        err_i_out = np.empty(n_active, dtype=np.int32)
-        err_j_out = np.empty(n_active, dtype=np.int32)
-        err_k_out = np.empty(n_active, dtype=np.int32)
-        x_out = np.empty(n_active, dtype=np.float64)
-        y_out = np.empty(n_active, dtype=np.float64)
-        z_out = np.empty(n_active, dtype=np.float64)
-        kx_out = np.empty(n_active, dtype=np.float64)
-        ky_out = np.empty(n_active, dtype=np.float64)
-        kz_out = np.empty(n_active, dtype=np.float64)
-        energy_out = np.empty(n_active, dtype=np.float64)
-        i_out = np.empty(n_active, dtype=np.int32)
-        j_out = np.empty(n_active, dtype=np.int32)
-        k_out = np.empty(n_active, dtype=np.int32)
-        kx_idx_out = np.empty(n_active, dtype=np.int32)
-        ky_idx_out = np.empty(n_active, dtype=np.int32)
-        kz_idx_out = np.empty(n_active, dtype=np.int32)
-        left_time_out = np.empty(n_active, dtype=np.float64)
-        spawn_requested_out = np.empty(n_active, dtype=np.bool_)
-        spawn_x_out = np.empty(n_active, dtype=np.float64)
-        spawn_y_out = np.empty(n_active, dtype=np.float64)
-        spawn_z_out = np.empty(n_active, dtype=np.float64)
-        spawn_kx_out = np.empty(n_active, dtype=np.float64)
-        spawn_ky_out = np.empty(n_active, dtype=np.float64)
-        spawn_kz_out = np.empty(n_active, dtype=np.float64)
-        spawn_energy_out = np.empty(n_active, dtype=np.float64)
-        spawn_kx_idx_out = np.empty(n_active, dtype=np.int32)
-        spawn_ky_idx_out = np.empty(n_active, dtype=np.int32)
-        spawn_kz_idx_out = np.empty(n_active, dtype=np.int32)
-        spawn_left_time_out = np.empty(n_active, dtype=np.float64)
-        spawn_i_out = np.empty(n_active, dtype=np.int32)
-        spawn_j_out = np.empty(n_active, dtype=np.int32)
-        spawn_k_out = np.empty(n_active, dtype=np.int32)
-        catch_stat_inc_out = np.empty(n_active, dtype=np.int32)
-        escape_total_inc_out = np.empty(n_active, dtype=np.int32)
-        escape_xp_out = np.empty(n_active, dtype=np.int32)
-        escape_xm_out = np.empty(n_active, dtype=np.int32)
-        escape_yp_out = np.empty(n_active, dtype=np.int32)
-        escape_ym_out = np.empty(n_active, dtype=np.int32)
-        escape_zp_out = np.empty(n_active, dtype=np.int32)
-        escape_zm_out = np.empty(n_active, dtype=np.int32)
-        step_ph_inc_out = np.empty(n_active, dtype=np.int32)
-        phonon_self_inc_out = np.empty(n_active, dtype=np.int32)
-        phonon_acoustic_inc_out = np.empty(n_active, dtype=np.int32)
-        phonon_opt_abs_inc_out = np.empty(n_active, dtype=np.int32)
-        phonon_opt_ems_inc_out = np.empty(n_active, dtype=np.int32)
-        phonon_absorbed_eV_out = np.empty(n_active, dtype=np.float64)
-        phonon_emitted_eV_out = np.empty(n_active, dtype=np.float64)
+        bufs = self._ensure_particle_fly_buffers(n_active)
+        status_out = bufs["status_out"][:n_active]
+        err_i_out = bufs["err_i_out"][:n_active]
+        err_j_out = bufs["err_j_out"][:n_active]
+        err_k_out = bufs["err_k_out"][:n_active]
+        x_out = bufs["x_out"][:n_active]
+        y_out = bufs["y_out"][:n_active]
+        z_out = bufs["z_out"][:n_active]
+        kx_out = bufs["kx_out"][:n_active]
+        ky_out = bufs["ky_out"][:n_active]
+        kz_out = bufs["kz_out"][:n_active]
+        energy_out = bufs["energy_out"][:n_active]
+        i_out = bufs["i_out"][:n_active]
+        j_out = bufs["j_out"][:n_active]
+        k_out = bufs["k_out"][:n_active]
+        kx_idx_out = bufs["kx_idx_out"][:n_active]
+        ky_idx_out = bufs["ky_idx_out"][:n_active]
+        kz_idx_out = bufs["kz_idx_out"][:n_active]
+        left_time_out = bufs["left_time_out"][:n_active]
+        spawn_requested_out = bufs["spawn_requested_out"][:n_active]
+        spawn_x_out = bufs["spawn_x_out"][:n_active]
+        spawn_y_out = bufs["spawn_y_out"][:n_active]
+        spawn_z_out = bufs["spawn_z_out"][:n_active]
+        spawn_kx_out = bufs["spawn_kx_out"][:n_active]
+        spawn_ky_out = bufs["spawn_ky_out"][:n_active]
+        spawn_kz_out = bufs["spawn_kz_out"][:n_active]
+        spawn_energy_out = bufs["spawn_energy_out"][:n_active]
+        spawn_kx_idx_out = bufs["spawn_kx_idx_out"][:n_active]
+        spawn_ky_idx_out = bufs["spawn_ky_idx_out"][:n_active]
+        spawn_kz_idx_out = bufs["spawn_kz_idx_out"][:n_active]
+        spawn_left_time_out = bufs["spawn_left_time_out"][:n_active]
+        spawn_i_out = bufs["spawn_i_out"][:n_active]
+        spawn_j_out = bufs["spawn_j_out"][:n_active]
+        spawn_k_out = bufs["spawn_k_out"][:n_active]
+        catch_stat_inc_out = bufs["catch_stat_inc_out"][:n_active]
+        escape_total_inc_out = bufs["escape_total_inc_out"][:n_active]
+        escape_xp_out = bufs["escape_xp_out"][:n_active]
+        escape_xm_out = bufs["escape_xm_out"][:n_active]
+        escape_yp_out = bufs["escape_yp_out"][:n_active]
+        escape_ym_out = bufs["escape_ym_out"][:n_active]
+        escape_zp_out = bufs["escape_zp_out"][:n_active]
+        escape_zm_out = bufs["escape_zm_out"][:n_active]
+        step_ph_inc_out = bufs["step_ph_inc_out"][:n_active]
+        phonon_self_inc_out = bufs["phonon_self_inc_out"][:n_active]
+        phonon_acoustic_inc_out = bufs["phonon_acoustic_inc_out"][:n_active]
+        phonon_opt_abs_inc_out = bufs["phonon_opt_abs_inc_out"][:n_active]
+        phonon_opt_ems_inc_out = bufs["phonon_opt_ems_inc_out"][:n_active]
+        phonon_absorbed_eV_out = bufs["phonon_absorbed_eV_out"][:n_active]
+        phonon_emitted_eV_out = bufs["phonon_emitted_eV_out"][:n_active]
 
         _particle_fly_batch_kernel(
             active_indices,
@@ -3454,56 +3513,56 @@ class Monte_Carlo_Simulation:
         self.particle_event_stats["escape_-Z"] += int(np.sum(escape_zm_out, dtype=np.int64))
         self.particle_event_stats["catch"] += int(np.sum(catch_stat_inc_out, dtype=np.int64))
 
-        catch_count = 0
-        for m in range(n_active):
+        error_mask = status_out == FLY_STATUS_ERROR_NON_MC
+        if np.any(error_mask):
+            m = int(np.flatnonzero(error_mask)[0])
             par_idx = int(active_indices[m])
-            status = int(status_out[m])
-            if status == FLY_STATUS_ERROR_NON_MC:
-                self._assert_particle_in_mc_region(
-                    int(err_i_out[m]),
-                    int(err_j_out[m]),
-                    int(err_k_out[m]),
-                    int(par_idx),
-                    float(x_out[m]),
-                    float(y_out[m]),
-                    float(z_out[m]),
-                )
-                raise RuntimeError(
-                    f"Particle entered invalid region: par_idx={par_idx}, "
-                    f"cell=({int(err_i_out[m])},{int(err_j_out[m])},{int(err_k_out[m])})"
-                )
+            self._assert_particle_in_mc_region(
+                int(err_i_out[m]),
+                int(err_j_out[m]),
+                int(err_k_out[m]),
+                int(par_idx),
+                float(x_out[m]),
+                float(y_out[m]),
+                float(z_out[m]),
+            )
+            raise RuntimeError(
+                f"Particle entered invalid region: par_idx={par_idx}, "
+                f"cell=({int(err_i_out[m])},{int(err_j_out[m])},{int(err_k_out[m])})"
+            )
 
-            if status == FLY_STATUS_CATCH:
-                if int(catch_stat_inc_out[m]) == 0:
-                    self.particle_event_stats["catch"] += 1
-                par.i[par_idx] = -9999
-                par.left_time[par_idx] = 0.0
-                if hasattr(par, "flag") and par.flag is not None:
-                    par.flag[par_idx] = 1
-                catch_count += 1
-                continue
+        catch_mask = status_out == FLY_STATUS_CATCH
+        live_mask = ~catch_mask
 
-            par.x[par_idx] = x_out[m]
-            par.y[par_idx] = y_out[m]
-            par.z[par_idx] = z_out[m]
-            par.kx[par_idx] = kx_out[m]
-            par.ky[par_idx] = ky_out[m]
-            par.kz[par_idx] = kz_out[m]
-            par.energy[par_idx] = energy_out[m]
-            par.i[par_idx] = i_out[m]
-            par.j[par_idx] = j_out[m]
-            par.k[par_idx] = k_out[m]
-            par.kx_idx[par_idx] = kx_idx_out[m]
-            par.ky_idx[par_idx] = ky_idx_out[m]
-            par.kz_idx[par_idx] = kz_idx_out[m]
-            par.left_time[par_idx] = left_time_out[m]
-            if hasattr(par, "flag") and par.flag is not None:
-                par.flag[par_idx] = 1
+        if np.any(catch_mask):
+            catch_indices = active_indices[catch_mask]
+            zero_catch_mask = catch_stat_inc_out[catch_mask] == 0
+            self.particle_event_stats["catch"] += int(np.count_nonzero(zero_catch_mask))
+            par.i[catch_indices] = -9999
+            par.left_time[catch_indices] = 0.0
+            par.flag[catch_indices] = 1
+            self.catch_par_num += int(catch_indices.size)
 
-        self.catch_par_num += catch_count
+        if np.any(live_mask):
+            live_indices = active_indices[live_mask]
+            par.x[live_indices] = x_out[live_mask]
+            par.y[live_indices] = y_out[live_mask]
+            par.z[live_indices] = z_out[live_mask]
+            par.kx[live_indices] = kx_out[live_mask]
+            par.ky[live_indices] = ky_out[live_mask]
+            par.kz[live_indices] = kz_out[live_mask]
+            par.energy[live_indices] = energy_out[live_mask]
+            par.i[live_indices] = i_out[live_mask]
+            par.j[live_indices] = j_out[live_mask]
+            par.k[live_indices] = k_out[live_mask]
+            par.kx_idx[live_indices] = kx_idx_out[live_mask]
+            par.ky_idx[live_indices] = ky_idx_out[live_mask]
+            par.kz_idx[live_indices] = kz_idx_out[live_mask]
+            par.left_time[live_indices] = left_time_out[live_mask]
+            par.flag[live_indices] = 1
 
         if np.any(spawn_requested_out):
-            spawn_mask = np.asarray(spawn_requested_out, dtype=bool)
+            spawn_mask = spawn_requested_out
             self._append_particle_states_batch(
                 active_indices[spawn_mask],
                 spawn_x_out[spawn_mask],

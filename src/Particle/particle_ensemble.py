@@ -191,6 +191,7 @@ class Particle:
         self.k = ck
         self.seed = seed
         self.left_time = left_time
+        self.flag = np.zeros(cell_indices.size, dtype=np.int8)
         self.kx_idx = kx_idx
         self.ky_idx = ky_idx
         self.kz_idx = kz_idx
