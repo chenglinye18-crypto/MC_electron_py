@@ -1,0 +1,14 @@
+# Current monitor surfaces
+# Format:
+#   X1 X2 Y1 Y2 Z1 Z2 FACE [NAME]
+#
+# Units:
+#   coordinates in nm
+#
+# FACE:
+#   +X  -X  +Y  -Y  +Z  -Z
+#
+# Example:
+#   0 0 0 580 -30 40 -X SourceIn
+#   21 21 0 580 -30 40 +X ChannelOut
+

@@ -42,6 +42,16 @@ class Mesh:
         self.node_doping = None
         self.node_vadd = None
         self.node_charge_fac_real = None
+        self.node_potential_real = None
+        self.node_potential_norm = None
+        self.node_electric_field_x_real = None
+        self.node_electric_field_y_real = None
+        self.node_electric_field_z_real = None
+        self.cell_electric_field_x_real = None
+        self.cell_electric_field_y_real = None
+        self.cell_electric_field_z_real = None
+        self.defect_density_node = None
+        self.node_defect_density = None
 
     def _assign_materials(self, regions: list) -> None:
         """

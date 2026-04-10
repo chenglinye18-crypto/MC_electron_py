@@ -9,6 +9,8 @@ ElectronNumber=600000
 Temperature=300
 
 dt=2e-16
+print_interval=1
+output_interval=1
 
 output_dir = ./output
 
@@ -20,4 +22,21 @@ init_energy_bin_step_low_eV=0.0001
 init_energy_bin_step_high_eV=0.002
 init_energy_bin_max_eV=8.0
 InitialConcentrationFile=igzotft_econc_Lg0.2_xsd0.19_ngd1e+16_nga0_Vg2.42_Vd4_Tem300
+InitialPotentialFile=igzotft_pot_Lg0.2_xsd0.19_ngd1e+16_nga0_Vg2.42_Vd4_Tem300
+CurrentMonitorFile=current_monitors.txt
 export_particles=1
+
+IGZO {
+  scattering_flags = acoustic, lo_abs, lo_ems, to_abs, to_ems
+  acoustic_model = deformation_potential_acoustic
+  optical_lo_model = deformation_potential_optical
+  optical_to_model = deformation_potential_optical
+  disorder_model = linear_tail_enhancement
+
+  acoustic_deformation_potential_eV = 1.7362
+  optical_deformation_potential_lo_eV_per_m = 1.7362
+  optical_deformation_potential_to_eV_per_m = 1.7362
+  nonparabolicity_eV_inv = 0.0
+  disorder_tail_energy_eV = 0.18
+  disorder_cutoff_energy_eV = 10.0
+}

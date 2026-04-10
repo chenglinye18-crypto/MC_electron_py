@@ -24,7 +24,7 @@ def print_banner() -> None:
     print("-3D Monte Carlo Simulator for Semiconductor Devices-")
     print("-    Developed by Chenglin Ye, Peking University   -")
     print("-    Email:chenglinye18@gmail.com                  -")
-    print("-    Version: 1.0.0, 2025-11-01                    -")
+    print("-    Version: 1.1.0, 2026-04-10                    -")
     print("----------------------------------------------------")
 
 
@@ -40,41 +40,46 @@ def main() -> int:
     print_banner()
     print(f"Start Time: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
 
-    print(f"[STEP 1] Reading input file: {args.input}")
+    print(f"[Input] {args.input}")
     parser = InputParser()
     config = parser.parse_master(args.input)
     if config:
-        print("  -> gridFile        :", config["gridFile"])
-        print("  -> device_file_name:", config["device_file_name"])
-        print("  -> total_step      :", config["total_step"])
-        print("  -> ElectronNumber  :", config["ElectronNumber"])
-        print("  -> Temperature     :", config["Temperature"])
-        print("  -> dt              :", config["dt"])
-        print("  -> output_dir      :", config["output_dir"])
-
         dt_val = config["dt"]
         if isinstance(dt_val, (int, float)) and dt_val > 1e-15:
             print("  -> Warning: dt is large for MC; consider a smaller step.")
 
     base_dir = os.path.dirname(os.path.abspath(args.input))
+    config["input_dir"] = base_dir
     ldg_name = config["device_file_name"]
     ldg_path = os.path.join(base_dir, ldg_name)
-    print(f"[STEP 2] Reading device file: {ldg_path}")
     device = parser.parse_ldg(ldg_path)
     mats = sorted(parser.found_semiconductors)
-    print("  -> Semiconductors  :", mats if mats else "None")
-    print("  -> Regions         :", len(device["regions"]))
-    print("  -> Contacts        :", len(device["contacts"]))
+    print(
+        f"[Device] semiconductors={mats if mats else 'None'} "
+        f"regions={len(device['regions'])} contacts={len(device['contacts'])}"
+    )
+
+    monitor_file = str(config.get("CurrentMonitorFile", "")).strip()
+    if monitor_file:
+        monitor_path = os.path.join(base_dir, monitor_file)
+        monitors = parser.parse_monitor_file(monitor_path)
+        config["current_monitors"] = monitors
+        print(f"[Monitor] surfaces={len(monitors)} file={monitor_file}")
+    else:
+        config["current_monitors"] = []
 
     grid_name = config["gridFile"]
     grid_path = os.path.join(base_dir, grid_name)
-    print(f"[STEP 3] Reading grid file: {grid_path}")
     coords = parser.parse_lgrid(grid_path)
     mesh = Mesh(coords, device["regions"])
-    print(f"  -> Mesh cells       : {mesh.nx} x {mesh.ny} x {mesh.nz}")
+    print(f"[Mesh] cells={mesh.nx} x {mesh.ny} x {mesh.nz}")
 
-    print("[STEP 4] Initializing physical parameters")
-    phys_config = init_physical_parameters(config, parser.found_semiconductors)
+    print("[Init] Physical parameters")
+    phys_config = init_physical_parameters(
+        config,
+        parser.found_semiconductors,
+        device.get("defects"),
+    )
     phys_config["energy_step_eV"] = float(config["energy_step_eV"])
     phys_config["energy_max_eV"] = float(config["energy_max_eV"])
     phys_config["init_energy_bin_min_eV"] = float(config.get("init_energy_bin_min_eV", 0.0))
@@ -91,9 +96,9 @@ def main() -> int:
     output_root = os.path.join(output_base, run_id)
     os.makedirs(output_root, exist_ok=True)
     config["output_root"] = output_root
-    print(f"[Main] Output directory created: {output_root}")
+    print(f"[Run] output={output_root}")
 
-    print("[STEP 5] Initializing band structure")
+    print("[Init] Band structure")
     bands_dir = os.path.join(project_root, "data", "bands")
     band_struct = AnalyticBand(phys_config, bands_dir)
     band_struct.initialize(output_root=output_root)
@@ -103,11 +108,11 @@ def main() -> int:
     phys_config["beta_norm"] = band_struct.beta_norm
     phys_config["difpr"] = band_struct.difpr
 
-    print("[STEP 6] Initializing cell and point data")
+    print("[Init] Cell and point data")
     init_cell_data(mesh, config, phys_config, device, input_dir=base_dir)
-    init_point_data(mesh, phys_config)
+    init_point_data(mesh, phys_config, device)
 
-    print("[STEP 7] Initializing Poisson solver")
+    print("[Init] Poisson solver")
     poisson_solver = PoissonSolver(mesh, phys_config, device, build_matrix=True)
 
     monte_carlo_simulation = Monte_Carlo_Simulation(

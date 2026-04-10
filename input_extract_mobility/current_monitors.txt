@@ -1,0 +1,17 @@
+# Current monitor surfaces
+# Format:
+#   X1 X2 Y1 Y2 Z1 Z2 FACE [NAME]
+#
+# Units:
+#   coordinates in nm
+#
+# FACE:
+#   +X  -X  +Y  -Y  +Z  -Z
+#
+# Example:
+#   1 1 0 100 0 100 -X LeftContact
+#   499 499 0 100 0 100 +X RightContact
+
+1 1 0 100 0 100 +X LeftContact
+250 250 0 100 0 100 +X MiddleContact
+499 499 0 100 0 100 +X RightContact

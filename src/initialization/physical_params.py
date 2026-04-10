@@ -6,16 +6,156 @@ Description: Initializing physical constants, material properties, and scaling s
 import numpy as np
 
 
-def init_physical_parameters(params, materials_found):
+def _resolve_material_scattering_config(params: dict, material: str) -> dict:
+    material_blocks = params.get("material_blocks", {}) or {}
+    block = material_blocks.get(str(material).upper(), {}) or {}
+
+    def _flag_enabled(name: str, default: bool) -> bool:
+        raw_flags = block.get("scattering_flags", None)
+        if raw_flags is None:
+            return default
+        if not isinstance(raw_flags, list):
+            raw_flags = [raw_flags]
+        flags = {str(item).strip().lower() for item in raw_flags}
+        return name.lower() in flags
+
+    return {
+        "material": str(material).upper(),
+        "flags": {
+            "acoustic": _flag_enabled("acoustic", True),
+            "lo_abs": _flag_enabled("lo_abs", True),
+            "lo_ems": _flag_enabled("lo_ems", True),
+            "to_abs": _flag_enabled("to_abs", True),
+            "to_ems": _flag_enabled("to_ems", True),
+        },
+        "models": {
+            "acoustic": str(block.get("acoustic_model", "deformation_potential_acoustic")),
+            "optical_lo": str(block.get("optical_lo_model", block.get("optical_model", "deformation_potential_optical"))),
+            "optical_to": str(block.get("optical_to_model", block.get("optical_model", "deformation_potential_optical"))),
+            "disorder": str(block.get("disorder_model", "none")),
+        },
+        "params": {
+            "acoustic_deformation_potential_eV": float(block.get("acoustic_deformation_potential_eV", 5.0)),
+            "optical_deformation_potential_lo_eV_per_m": float(
+                block.get("optical_deformation_potential_lo_eV_per_m", 5.0e5)
+            ),
+            "optical_deformation_potential_to_eV_per_m": float(
+                block.get("optical_deformation_potential_to_eV_per_m", 5.0e5)
+            ),
+            "nonparabolicity_eV_inv": float(block.get("nonparabolicity_eV_inv", 0.0)),
+            "disorder_tail_energy_eV": float(block.get("disorder_tail_energy_eV", 0.18)),
+            "disorder_cutoff_energy_eV": float(block.get("disorder_cutoff_energy_eV", 10.0)),
+        },
+    }
+
+
+def _compute_igzo_defect_density_m3(
+    defect_params: dict,
+    eg_real_eV: float,
+    temperature_K: float,
+) -> tuple[float, dict]:
+    """
+    Compute net defect charge source density [/m^3] for IGZO.
+
+    Sign convention:
+    - tail states are treated as acceptor-like: occupied fraction f(E)
+      contributes negative charge magnitude N_A^-.
+    - Gaussian vacancy states are treated as donor-like: ionized fraction
+      1-f(E) contributes positive charge magnitude N_D^+.
+
+    Returned value is the net defect charge source in /q units:
+      N_defect_net = N_D^+ - N_A^-
+    """
+    if not defect_params:
+        return 0.0, {}
+
+    nta_cm3_eV = max(float(defect_params.get("nta", 0.0)), 0.0)
+    nga_cm3_eV = max(float(defect_params.get("nga", 0.0)), 0.0)
+    ea_eV = max(float(defect_params.get("wta", defect_params.get("ea", 0.0))), 1e-6)
+    ega_eV = float(defect_params.get("ega", eg_real_eV))
+    wga_eV = max(float(defect_params.get("wga", 0.0)), 1e-6)
+
+    # Optional energy reference overrides in ldg defects block.
+    ec_eV = float(defect_params.get("ec", eg_real_eV))
+    ef_eV = float(
+        defect_params.get(
+            "ef",
+            defect_params.get("efermi", ec_eV),
+        )
+    )
+
+    if nta_cm3_eV <= 0.0 and nga_cm3_eV <= 0.0:
+        return 0.0, {
+            "ec_eV": ec_eV,
+            "ef_eV": ef_eV,
+            "ea_eV": ea_eV,
+            "ega_eV": ega_eV,
+            "wga_eV": wga_eV,
+            "energy_min_eV": 0.0,
+            "energy_max_eV": 0.0,
+            "num_points": 0,
+        }
+
+    kBT_eV = 8.617333262145e-5 * float(temperature_K)
+    kBT_eV = max(kBT_eV, 1e-6)
+
+    # Build a finite integration window wide enough for both DOS terms.
+    e_min = min(ec_eV - 40.0 * ea_eV, ega_eV - 8.0 * wga_eV, ef_eV - 40.0 * kBT_eV)
+    e_max = max(ec_eV + 20.0 * kBT_eV, ega_eV + 8.0 * wga_eV, ef_eV + 20.0 * kBT_eV)
+    if e_max <= e_min:
+        e_max = e_min + 1.0
+
+    dE_target = min(ea_eV, wga_eV, kBT_eV) / 40.0
+    dE_target = max(dE_target, 1.0e-5)
+    n_energy = int(np.ceil((e_max - e_min) / dE_target)) + 1
+    n_energy = int(np.clip(n_energy, 2001, 200001))
+    energy_eV = np.linspace(e_min, e_max, n_energy, dtype=float)
+
+    # Convert DOS prefactors from cm^-3 eV^-1 to m^-3 eV^-1.
+    nta_m3_eV = nta_cm3_eV * 1.0e6
+    nga_m3_eV = nga_cm3_eV * 1.0e6
+
+    # Tail states are taken below Ec; above Ec they are not part of the tail DOS.
+    dos_tail = np.zeros_like(energy_eV)
+    tail_mask = energy_eV <= ec_eV
+    tail_arg = np.clip((energy_eV[tail_mask] - ec_eV) / ea_eV, -300.0, 300.0)
+    dos_tail[tail_mask] = nta_m3_eV * np.exp(tail_arg)
+    gauss_arg = ((energy_eV - ega_eV) / wga_eV) ** 2
+    dos_gauss = nga_m3_eV * np.exp(-gauss_arg)
+
+    fermi_arg = np.clip((energy_eV - ef_eV) / kBT_eV, -300.0, 300.0)
+    fermi = 1.0 / (1.0 + np.exp(fermi_arg))
+    one_minus_fermi = 1.0 - fermi
+
+    tail_acceptor_occupied_m3 = float(np.trapezoid(dos_tail * fermi, energy_eV))
+    gauss_donor_ionized_m3 = float(np.trapezoid(dos_gauss * one_minus_fermi, energy_eV))
+    defect_density_m3 = gauss_donor_ionized_m3 - tail_acceptor_occupied_m3
+
+    detail = {
+        "ec_eV": ec_eV,
+        "ef_eV": ef_eV,
+        "ea_eV": ea_eV,
+        "ega_eV": ega_eV,
+        "wga_eV": wga_eV,
+        "energy_min_eV": e_min,
+        "energy_max_eV": e_max,
+        "num_points": n_energy,
+        "tail_acceptor_occupied_m3": tail_acceptor_occupied_m3,
+        "gauss_donor_ionized_m3": gauss_donor_ionized_m3,
+        "net_defect_density_m3": defect_density_m3,
+    }
+    return float(defect_density_m3), detail
+
+
+def init_physical_parameters(params, materials_found, defects_by_material: dict | None = None):
     """
     Args:
         params (dict): Parameters from input.txt (Temperature, dt, etc.)
         materials_found (list): Semiconductors identified from ldg.txt (e.g., ['IGZO'])
+        defects_by_material (dict | None): Parsed defects blocks from ldg.txt.
     Returns:
         dict: Physical configuration containing both real and normalized values.
     """
-    print(f"[Init] Initializing physical parameters for: {materials_found}")
-
     # =========================================================================
     # 1. Fundamental Physical Constants (SI Units)
     # =========================================================================
@@ -111,6 +251,21 @@ def init_physical_parameters(params, materials_found):
     Nc_real = 2.0 * ((2.0 * PI * md_eff * BOLTZ * T0) / (h_planck * h_planck)) ** 1.5
     Nc_norm = Nc_real / conc0
 
+    # IGZO defect density from defects block (if provided).
+    defect_density_m3 = 0.0
+    defect_detail = {}
+    if primary_mat == "IGZO":
+        mat_defect_cfg = {}
+        if defects_by_material is not None:
+            mat_defect_cfg = defects_by_material.get("IGZO", {})
+        defect_density_m3, defect_detail = _compute_igzo_defect_density_m3(
+            mat_defect_cfg,
+            eg_real,
+            T0,
+        )
+    defect_density_norm = defect_density_m3 / conc0
+    scattering_config = _resolve_material_scattering_config(params, primary_mat)
+
     # =========================================================================
     # 5. Final Normalization (Suffix: _norm)
     # =========================================================================
@@ -141,6 +296,7 @@ def init_physical_parameters(params, materials_found):
         "mt_val": mt_val,
         "Nc_real": Nc_real,
         "sia0_real":sia0_real,
+        "defect_density_m3": defect_density_m3,
 
         # Normalized Bulk Parameters
         "sia0_norm": sia0_real / spr0,   #晶格常数归一化
@@ -162,12 +318,18 @@ def init_physical_parameters(params, materials_found):
         "mt_norm": mt_val,
         "alpha_norm": alpha_val * (eV0 / EC),  # alpha[1/eV] * kBT[eV]
         "Nc_norm": Nc_norm,
+        "defect_density_norm": defect_density_norm,
+        "scattering_config": scattering_config,
 
         # Coefficients
         "a0pi_norm": PI / (sia0_real / spr0),    #k空间归一化
         "QuantumPotentialCoef_norm": (hq0 ** 2 * ec0)
         / (12.0 * 0.26 * em0 * spr0 ** 2 * pot0),
+        "defect_model": defect_detail,
     }
 
-    print(f"      -> Normalization complete. [Eg={eg_real:.2f}eV, eps_r={eps_rel}]")
+    summary = f"[Init] material={primary_mat} Eg={eg_real:.2f} eV eps_r={eps_rel}"
+    if primary_mat == "IGZO":
+        summary += f" defect={defect_density_m3:.4e} m^-3"
+    print(summary)
     return phys_config

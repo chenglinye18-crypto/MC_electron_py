@@ -1,0 +1,75 @@
+  default_par_number 15 0
+
+  region  0 500  0 100  0 100 VACUUM 
+
+
+  region  0 500  0 100  0 100 IGZO  
+
+  donor 0 500  0 100  0 100 2e17
+
+  motioncube  0 22 -290 290 -30 40 PASS   PASS   PASS   PASS  PASS PASS 
+
+
+
+  motionplane  1 1 0 100  0 100  -X CATCH
+
+  motionplane  1 1 0 100  0 100  +X GENERATE
+
+  motionplane  0 0 0 100  0 100  -X REFLECT
+
+
+  motionplane  499 499 0 100  0 100 +X CATCH
+
+  motionplane  499 499 0 100  0 100 -X GENERATE
+
+  motionplane  500 500 0 100  0 100  +X REFLECT
+
+  motionplane 0 500 0 0 0 100 -Y REFLECT
+
+  motionplane 0 500 100 100 0 100 +Y REFLECT
+
+  motionplane 0 500 0 100 0 0 -Z REFLECT
+  
+  motionplane 0 500 0 100 100 100 +Z REFLECT
+
+
+  ScatterArea 0 500  0 100  0 100 3	
+  parnumber 0 500  0 100  0 100 5 0
+
+  surface_scatter_range 0 500  0 100  0 100
+
+  quantumRegion 0 500  0 100  0 100
+
+
+
+  contact [source]
+
+    1 PhiMS=0
+
+    0 0 0 100  0 100
+
+    attachcontact 0 12 -290 -100 -30 40
+
+    0     
+
+
+  contact [drain]
+
+    1 PhiMS=0
+
+    0 0 100 290 -30 40
+
+    attachcontact  0 2 100 290 -30 40 
+
+    4
+
+  defects "IGZO"
+    nta 1.55e20 
+    wta 0.013
+    nga 6.5e16 
+    Ega 2.75
+    wga 0.1
+    EF 3.13
+end
+
+

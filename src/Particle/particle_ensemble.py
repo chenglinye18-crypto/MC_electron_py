@@ -121,7 +121,7 @@ class Particle:
         self._initialize(mesh, config, phys_config, band_struct, output_root)
 
     def _initialize(self, mesh, config: dict, phys_config: dict, band_struct, output_root: str) -> None:
-        print("[Init] Initializing particles (vectorized + Numba)...")
+        print("[Init] Building initial particle ensemble")
 
         total_particles_target = int(config["ElectronNumber"])
         if total_particles_target <= 0:
@@ -170,9 +170,9 @@ class Particle:
         kx, ky, kz, energy, _k_idx = _sample_thermal_k(cell_indices.size, temperature, kb, q_e, band_struct)  #归一化
 
         to_pi = phys_config["sia0_norm"] / np.pi
-        kx_idx = band_struct.get_axis_indices_vectorized(kx * to_pi)
-        ky_idx = band_struct.get_axis_indices_vectorized(ky * to_pi)
-        kz_idx = band_struct.get_axis_indices_vectorized(kz * to_pi)
+        kx_idx = band_struct.get_axis_indices_vectorized(kx * to_pi, axis="x")
+        ky_idx = band_struct.get_axis_indices_vectorized(ky * to_pi, axis="y")
+        kz_idx = band_struct.get_axis_indices_vectorized(kz * to_pi, axis="z")
 
         seed = np.arange(cell_indices.size, dtype=np.int64)
         left_time = np.full(cell_indices.size, float(config["dt"]), dtype=float)
@@ -230,4 +230,4 @@ class Particle:
         header = "ID i j k     x(m)         y(m)          z(m)       kx(pi/a)  ky(pi/a)  kz(pi/a)   energy_eV   charge(/q)    kx_idx ky_idx kz_idx"
         fmt = ["%d", "%d", "%d", "%d"] + ["%.6e"] * 3 + ["%.3e"] * 3 + ["%.6e"] * 2 + ["%d", "%d", "%d"]
         np.savetxt(out_path, data, header=header, fmt=fmt)
-        print(f"      -> Exported particle data to: {out_path}")
+        print(f"  -> Initial particles exported: {out_path}")

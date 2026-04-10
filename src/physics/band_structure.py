@@ -48,6 +48,18 @@ class AnalyticBand:
 
         self.valley_config = None
         self.axis_lookup_table = None
+        self.kx_ticks_pi = None
+        self.ky_ticks_pi = None
+        self.kz_ticks_pi = None
+        self.kx_tick_boundaries = None
+        self.ky_tick_boundaries = None
+        self.kz_tick_boundaries = None
+        self.num_ticks_x = 0
+        self.num_ticks_y = 0
+        self.num_ticks_z = 0
+        self.velocity_grid_real = None
+        self.energy_grid_eV_map = None
+        self.lookup_valid = None
         self.phonon_spectrum = None
         self.scattering_table = None
         self.scattering_rate = None
@@ -60,9 +72,8 @@ class AnalyticBand:
         self.beta_norm = 0.0
         self.difpr = {}
 
-        print("[Band] Initializing Analytic Band Structure framework...")
-
     def initialize(self, output_root: str | None = None) -> None:
+        print("[Band] Building analytic band tables")
         if self.ek_data["k_norm"] is None:
             self.read_analytic_data(ek_file_override=self.ek_file_override) #√
         self.init_valley_configuration() #√
@@ -71,13 +82,19 @@ class AnalyticBand:
         self.init_phonon_spectrum()
         self.build_analytic_scattering_table(output_root=output_root)
         self.init_derived_constants()
+        nk = 0 if self.ek_data["energy_eV"] is None else int(len(self.ek_data["energy_eV"]))
+        print(
+            "[Band] Ready: "
+            f"nk={nk}, "
+            f"kgrid={self.num_ticks_x}x{self.num_ticks_y}x{self.num_ticks_z}, "
+            f"bins={self.analytic_num_bins}"
+        )
 
     def read_analytic_data(self, ek_file_override: str | None = None) -> None:
         # 1. DOS table 检查完毕
         dos_filename = f"DOS_{self.material}.txt"
         dos_path = os.path.join(self.input_path, dos_filename)
         if os.path.exists(dos_path):
-            print(f"[Band] Reading DOS data from: {dos_path}")
             raw_dos = np.loadtxt(dos_path, skiprows=1)
 
             self.dos_norm = np.zeros(self.mtab + 1, dtype=float)
@@ -96,7 +113,6 @@ class AnalyticBand:
 
             valid_mask = (itab >= 0) & (itab <= self.mtab)
             self.dos_norm[itab[valid_mask]] = dos_norm_table[valid_mask] #实际算出来的和dos_norm一样
-            print(f"      -> DOS table loaded. Max DOS: {np.max(self.dos_norm / self.eV0 * self.conc0):.4e} eV^-1 m^-3")
         else:
             print(f"      [Warning] DOS file {dos_path} not found.")
 
@@ -106,7 +122,6 @@ class AnalyticBand:
         if not os.path.exists(ek_path):
             raise FileNotFoundError(f"Critical: E-k band file not found at {ek_path}")
 
-        print(f"[Band] Reading E-k data from: {ek_path}")
         data = np.loadtxt(ek_path, skiprows=1)
 
         kx_pi, ky_pi, kz_pi = data[:, 0], data[:, 1], data[:, 2]  #单位pi/a
@@ -134,7 +149,6 @@ class AnalyticBand:
         #valley_idx[np.abs(ky_pi) > 1.5] = 1
         self.ek_data["valley_idx"] = valley_idx
 
-        print(f"      -> E-k table loaded. Points: {len(E_eV_in)}")
         #意义不大先注释
         #print(
         #    "      -> Grid step sets (pi/a): "
@@ -210,59 +224,152 @@ class AnalyticBand:
             self.valley_config = {"num_valleys": 1, "degeneracy": 1, "type": "GAMMA"}
         else:
             self.valley_config = {"num_valleys": 6, "degeneracy": 6, "type": "X"}
-        print(f"      -> Valley Config: {self.valley_config['type']} "
-              f"({self.valley_config['num_valleys']} valleys)")
+        return
 
     def init_axis_lookup_table(self) -> None:
         """
-        Build axis lookup table in kx units of (pi/a).
+        Build axis lookup tables and a structured 3D velocity map in units of pi/a.
         """
         if self.ek_data["k_pi"] is None:
             raise ValueError("[Error] Critical: E-k data must be loaded before building lookup table.")
 
-        print("[Band] Building Axis Lookup Table & Velocity Map (k in pi/a)...")
+        raw_k = np.asarray(self.ek_data["k_pi"], dtype=float)
+        raw_v = np.asarray(self.ek_data["velocity_real"], dtype=float)
+        raw_e = np.asarray(self.ek_data["energy_eV"], dtype=float)
 
-        raw_kx = self.ek_data["k_pi"][:, 0]
-        raw_vx = self.ek_data["velocity_real"][:, 0]
+        kx_round = np.round(raw_k[:, 0], decimals=12)
+        ky_round = np.round(raw_k[:, 1], decimals=12)
+        kz_round = np.round(raw_k[:, 2], decimals=12)
 
-        kx_round = np.round(raw_kx.astype(float), decimals=12)
-        self.ticks = np.unique(kx_round)
-        self.num_ticks = int(self.ticks.size)
-        if self.num_ticks == 0:
+        self.kx_ticks_pi = np.unique(kx_round)
+        self.ky_ticks_pi = np.unique(ky_round)
+        self.kz_ticks_pi = np.unique(kz_round)
+        self.kx_ticks_pi.sort()
+        self.ky_ticks_pi.sort()
+        self.kz_ticks_pi.sort()
+
+        self.num_ticks_x = int(self.kx_ticks_pi.size)
+        self.num_ticks_y = int(self.ky_ticks_pi.size)
+        self.num_ticks_z = int(self.kz_ticks_pi.size)
+        if self.num_ticks_x == 0 or self.num_ticks_y == 0 or self.num_ticks_z == 0:
             raise ValueError("[Error] No K ticks detected from E-k data.")
-        self.ticks.sort()
 
-        # Cell boundaries in pi/a: [k0, mid01, ..., mid(n-2,n-1), k_{n-1}]
-        self.tick_boundaries = self._build_axis_boundaries(self.ticks)
+        self.kx_tick_boundaries = self._build_axis_boundaries(self.kx_ticks_pi)
+        self.ky_tick_boundaries = self._build_axis_boundaries(self.ky_ticks_pi)
+        self.kz_tick_boundaries = self._build_axis_boundaries(self.kz_ticks_pi)
 
-        # Build vx lookup aligned with self.ticks (average vx on repeated kx points).
-        self.velocity_table = np.zeros(self.num_ticks, dtype=float)
-        sort_idx = np.argsort(kx_round)
-        k_sorted = kx_round[sort_idx]
-        v_sorted = raw_vx[sort_idx]
-        uniq_k, start_idx = np.unique(k_sorted, return_index=True)
-        for i, start in enumerate(start_idx):
-            end = start_idx[i + 1] if i + 1 < start_idx.size else k_sorted.size
-            self.velocity_table[i] = float(np.mean(v_sorted[start:end]))
+        ix = np.searchsorted(self.kx_ticks_pi, kx_round)
+        iy = np.searchsorted(self.ky_ticks_pi, ky_round)
+        iz = np.searchsorted(self.kz_ticks_pi, kz_round)
 
-        print(
-            f"      -> Generated {self.num_ticks} kx ticks in pi/a. "
-            f"Range: [{self.ticks[0]:.4f}, {self.ticks[-1]:.4f}]"
-        )
-        print("      -> Boundaries and velocity table built on pi/a axis.")
+        grid_shape = (self.num_ticks_x, self.num_ticks_y, self.num_ticks_z)
+        self.velocity_grid_real = np.zeros(grid_shape + (3,), dtype=float)
+        self.energy_grid_eV_map = np.zeros(grid_shape, dtype=float)
+        self.lookup_valid = np.zeros(grid_shape, dtype=bool)
+        self.axis_lookup_table = np.full(grid_shape, -1, dtype=np.int64)
 
-    def get_axis_indices_vectorized(self, k_values: np.ndarray) -> np.ndarray:
+        self.velocity_table = np.zeros(self.num_ticks_x, dtype=float)
+        vx_acc = np.zeros(self.num_ticks_x, dtype=float)
+        vx_cnt = np.zeros(self.num_ticks_x, dtype=np.int64)
+
+        for row in range(raw_k.shape[0]):
+            ii = int(ix[row])
+            jj = int(iy[row])
+            kk = int(iz[row])
+            self.velocity_grid_real[ii, jj, kk, :] = raw_v[row]
+            self.energy_grid_eV_map[ii, jj, kk] = raw_e[row]
+            self.lookup_valid[ii, jj, kk] = True
+            self.axis_lookup_table[ii, jj, kk] = row
+            vx_acc[ii] += raw_v[row, 0]
+            vx_cnt[ii] += 1
+
+        valid_x = vx_cnt > 0
+        self.velocity_table[valid_x] = vx_acc[valid_x] / vx_cnt[valid_x]
+
+        missing = int(np.size(self.lookup_valid) - np.count_nonzero(self.lookup_valid))
+        if missing > 0:
+            raise ValueError(
+                f"[Error] Structured E-k lookup grid is incomplete: missing {missing} k-points."
+            )
+
+
+    def get_axis_indices_vectorized(self, k_values: np.ndarray, axis: str = "x") -> np.ndarray:
         """
         Vectorized lookup for k-axis indices.
         Input k_values must be in units of pi/a.
         """
-        if not hasattr(self, "tick_boundaries"):
-            raise ValueError("[Error] tick_boundaries is not initialized.")
+        axis_key = axis.lower()
+        if axis_key == "x":
+            boundaries = self.kx_tick_boundaries
+            n_ticks = self.num_ticks_x
+        elif axis_key == "y":
+            boundaries = self.ky_tick_boundaries
+            n_ticks = self.num_ticks_y
+        elif axis_key == "z":
+            boundaries = self.kz_tick_boundaries
+            n_ticks = self.num_ticks_z
+        else:
+            raise ValueError(f"[Error] Unsupported axis '{axis}'.")
+
+        if boundaries is None or n_ticks <= 0:
+            raise ValueError("[Error] Axis lookup boundaries are not initialized.")
         if not np.all(np.isfinite(k_values)):
             raise ValueError("[Error] Non-finite k_values detected.")
-        idx = np.searchsorted(self.tick_boundaries, k_values, side="right") - 1
-        idx = np.clip(idx, 0, self.num_ticks - 1)
+        idx = np.searchsorted(boundaries, k_values, side="right") - 1
+        idx = np.clip(idx, 0, n_ticks - 1)
         return idx.astype(np.int32)
+
+    def get_velocity_real_by_indices(
+        self,
+        kx_idx: int | np.ndarray,
+        ky_idx: int | np.ndarray,
+        kz_idx: int | np.ndarray,
+    ) -> np.ndarray:
+        if self.velocity_grid_real is None:
+            raise ValueError("[Error] velocity_grid_real is not initialized.")
+
+        ix = np.clip(np.asarray(kx_idx, dtype=np.int64), 0, self.num_ticks_x - 1)
+        iy = np.clip(np.asarray(ky_idx, dtype=np.int64), 0, self.num_ticks_y - 1)
+        iz = np.clip(np.asarray(kz_idx, dtype=np.int64), 0, self.num_ticks_z - 1)
+        return self.velocity_grid_real[ix, iy, iz]
+
+    def get_energy_eV_by_indices(
+        self,
+        kx_idx: int | np.ndarray,
+        ky_idx: int | np.ndarray,
+        kz_idx: int | np.ndarray,
+    ) -> np.ndarray:
+        if self.energy_grid_eV_map is None:
+            raise ValueError("[Error] energy_grid_eV_map is not initialized.")
+
+        ix = np.clip(np.asarray(kx_idx, dtype=np.int64), 0, self.num_ticks_x - 1)
+        iy = np.clip(np.asarray(ky_idx, dtype=np.int64), 0, self.num_ticks_y - 1)
+        iz = np.clip(np.asarray(kz_idx, dtype=np.int64), 0, self.num_ticks_z - 1)
+        return self.energy_grid_eV_map[ix, iy, iz]
+
+    def get_total_phonon_rate_real(self, energy_eV: float | np.ndarray) -> np.ndarray:
+        """
+        Interpolate total phonon scattering rate from the prebuilt E-rate table.
+
+        Input energy is in eV. Output rate is in 1/s.
+        """
+        if self.scattering_rate is None or "total" not in self.scattering_rate:
+            raise ValueError("[Error] Phonon scattering table is not initialized.")
+
+        total_rate_norm = np.asarray(self.scattering_rate["total"], dtype=float)
+        if total_rate_norm.size == 0:
+            energy_arr = np.asarray(energy_eV, dtype=float)
+            return np.zeros_like(energy_arr, dtype=float)
+
+        time0 = float(self.phys["scales"]["time0"])
+        if time0 <= 0.0:
+            raise ValueError("[Error] Invalid time0 for rate conversion.")
+
+        energy_grid_eV = (self.emin + np.arange(total_rate_norm.size) * self.dtable) * self.eV0
+        energy_arr = np.asarray(energy_eV, dtype=float)
+        energy_clipped = np.clip(energy_arr, energy_grid_eV[0], energy_grid_eV[-1])
+        rate_norm = np.interp(energy_clipped, energy_grid_eV, total_rate_norm)
+        return rate_norm / time0
 
     def build_analytic_lists(self, debug_output_path: str | None = None) -> None:
         """
@@ -270,8 +377,6 @@ class AnalyticBand:
         """
         if self.ek_data["energy_eV"] is None:
             raise ValueError("[Error] E-k energy data is missing.")
-
-        print("[Band] Building Analytic Lists (Energy Binning)...")
 
         q_e = self.phys["q_e"]
         eV0 = self.phys["scales"]["eV0_J"] / q_e
@@ -304,12 +409,6 @@ class AnalyticBand:
             de_low,
             de_high,
             int(low_edges.size - 1),
-        )
-
-        print(
-            "      -> Piecewise bins: "
-            f"[{e_min},{e_split}] step={de_low:g} eV, "
-            f"({e_split},{e_max}] step={de_high:g} eV, total={self.analytic_num_bins}"
         )
 
         bin_indices = self.map_energy_to_bins(energies_eV)
@@ -355,10 +454,6 @@ class AnalyticBand:
             self.analytic_wsum[ib] = total_w
 
         self.analytic_nonempty_bins = np.flatnonzero(self.analytic_ntlist > 0).astype(np.int32)
-        print(
-            f"      -> Indexed {len(energies_eV)} states into {self.analytic_num_bins} bins "
-            f"(non-empty: {self.analytic_nonempty_bins.size})."
-        )
 
         if debug_output_path:
             self._write_debug_bins(debug_output_path, eV0)
@@ -427,8 +522,6 @@ class AnalyticBand:
                 print(f"[Warning] Phonon file {filename} not found. Skipping phonon init.")
                 return
 
-        print(f"[Band] Reading Phonon Spectrum from: {file_path}")
-
         self.phonon = {
             "a0": 0.0,
             "qmax": 0.0,
@@ -487,10 +580,6 @@ class AnalyticBand:
         self.phonon["omega_table"] = hw_eV / eV0
         self.phonon["vg_table"] = v_vals / velo0
 
-        print(f"      -> Loaded {self.phonon['nq_tab']} points.")
-        print(f"      -> a0 = {self.phonon['a0']:.4e}, qmax = {self.phonon['qmax']:.4f}")
-        print(f"      -> Data normalized by eV0={eV0:.4f} eV, velo0={velo0:.2e} m/s")
-
     def build_analytic_scattering_table(self, output_root: str | None = None) -> None:
         if self.phys["material"] != "IGZO":
             print("[Warning] Scattering table: only IGZO branch implemented.")
@@ -498,8 +587,6 @@ class AnalyticBand:
         if self.phonon is None or self.phonon["omega_table"] is None:
             print("[Warning] Phonon spectrum not initialized. Skipping scattering table.")
             return
-
-        print("[Band] Building Analytic Scattering Table (IGZO + Numba)...")
 
         kB = self.phys["kb"]
         hbar = self.phys["hbar"]
@@ -512,23 +599,35 @@ class AnalyticBand:
         T_lattice = float(self.phys["Temperature"])
 
         rho = self.phys["sirho_real"]
-        E_ac_eV = 5.0
+        scat_cfg = self.phys.get("scattering_config", {}) or {}
+        scat_flags = scat_cfg.get("flags", {}) or {}
+        scat_models = scat_cfg.get("models", {}) or {}
+        scat_params = scat_cfg.get("params", {}) or {}
+
+        E_ac_eV = float(scat_params.get("acoustic_deformation_potential_eV", 5.0))
         D_LA = E_ac_eV * q_e
         D_TA = E_ac_eV * q_e
-        Dopt_LO = 5e5 * q_e
-        Dopt_TO = 5e5 * q_e
+        Dopt_LO = float(scat_params.get("optical_deformation_potential_lo_eV_per_m", 5.0e5)) * q_e
+        Dopt_TO = float(scat_params.get("optical_deformation_potential_to_eV_per_m", 5.0e5)) * q_e
 
         ml = float(self.phys["ml_val"]) * m0
         mt = float(self.phys["mt_val"]) * m0
         md_SI = (ml * mt * mt) ** (1.0 / 3.0)
 
-        alpha_val = 0.0
+        alpha_val = float(scat_params.get("nonparabolicity_eV_inv", 0.0))
 
         a0 = self.phonon["a0"]
         Rs = a0 * (3.0 / (16.0 * pi)) ** (1.0 / 3.0) if a0 > 0.0 else 0.0
 
-        E_tail_eV = 0.18
-        E_max_corr_eV = 10.0
+        disorder_model = str(scat_models.get("disorder", "none")).strip().lower()
+        if disorder_model in {"", "none"}:
+            E_tail_eV = 0.0
+            E_max_corr_eV = 0.0
+        elif disorder_model == "linear_tail_enhancement":
+            E_tail_eV = float(scat_params.get("disorder_tail_energy_eV", 0.18))
+            E_max_corr_eV = float(scat_params.get("disorder_cutoff_energy_eV", 10.0))
+        else:
+            raise ValueError(f"[Error] Unsupported disorder_model: {disorder_model}")
         kBT_eV = (kB * T_lattice) / q_e
 
         num_energy_bins = self.mtab + 1
@@ -596,6 +695,18 @@ class AnalyticBand:
             hw_max_limit,
         )
 
+        if not bool(scat_flags.get("acoustic", True)):
+            dose[0, :] = 0.0
+        if not bool(scat_flags.get("lo_abs", True)):
+            dose[1, :] = 0.0
+        if not bool(scat_flags.get("lo_ems", True)):
+            dose[2, :] = 0.0
+        if not bool(scat_flags.get("to_abs", True)):
+            dose[3, :] = 0.0
+        if not bool(scat_flags.get("to_ems", True)):
+            dose[4, :] = 0.0
+        sumscatt = np.sum(dose, axis=0)
+
         self.scattering_rate = {
             "total": sumscatt,
             "components": dose,
@@ -605,13 +716,10 @@ class AnalyticBand:
         self.hw_max_limit = hw_max_limit
         self.phonon_hw_cdf = phonon_hw_cdf
 
-        print(f"      -> Scattering built. Max rate = {np.max(sumscatt):.4e}")
-
         if output_root:
             scatter_dir = os.path.join(output_root, "Scatter")
             os.makedirs(scatter_dir, exist_ok=True)
             out_file = os.path.join(scatter_dir, "scattering_rates.txt")
-            print(f"      -> Writing scattering table to: {out_file}")
 
             eV0_eV = eV0_J / q_e
             with open(out_file, "w", encoding="utf-8") as handle:
@@ -634,11 +742,7 @@ class AnalyticBand:
                         f"{energy_eV:.6f} {r_tot:.6e} {r_ac:.6e} "
                         f"{r_lo_abs:.6e} {r_lo_ems:.6e} {r_to_abs:.6e} {r_to_ems:.6e}\n"
                     )
-            print("      -> Scattering table export complete.")
-
     def init_derived_constants(self) -> None:
-        print("      -> Calculating derived constants (Ni, Barrier)...")
-
         eV0_J = self.phys["scales"]["eV0_J"]
         spr0 = self.phys["scales"]["spr0"]
         conc0 = self.phys["scales"]["conc0"]
@@ -660,7 +764,6 @@ class AnalyticBand:
             ni_real_cm3 = ni_calc_cm3 * 0.12
             ni_real_m3 = ni_real_cm3 * 1.0e6
             self.Ni_norm = ni_real_m3 / conc0
-            print(f"         [IGZO] Ni (Real): {ni_real_cm3:.2e} cm^-3")
         else:
             self.barrier_height_norm = 3.2 / (eV0_J / q_e)
             self.beta_norm = (2.15e-5 / (eV0_J / q_e)) * np.sqrt(field0)
@@ -671,9 +774,6 @@ class AnalyticBand:
             ni_real_cm3 = ni_calc_cm3 * 0.1534
             ni_real_m3 = ni_real_cm3 * 1.0e6
             self.Ni_norm = ni_real_m3 / conc0
-            print(f"         [Si] Ni (Real): {ni_real_cm3:.2e} cm^-3")
-
-        print(f"         -> Ni (Normalized): {self.Ni_norm:.4e}")
 
 
 try:
