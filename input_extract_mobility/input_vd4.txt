@@ -1,0 +1,46 @@
+gridFile=lgrid.txt
+
+device_file_name=ldg.txt
+
+total_step=140000
+# ResumeFromOutputDir=../output/20260410_221407
+
+
+print_interval=100
+output_interval=10000
+
+ElectronNumber=600000
+
+Temperature=300
+
+dt=2e-16
+
+output_dir = ./output
+output_name = extract_mobility_vd4
+
+energy_step_eV=0.001
+energy_max_eV=7.0
+init_energy_bin_min_eV=0.0
+init_energy_bin_split_eV=0.05
+init_energy_bin_step_low_eV=0.0001
+init_energy_bin_step_high_eV=0.002
+init_energy_bin_max_eV=8.0
+InitialConcentrationFile=igzo_econc_resistor_str_vs_0_vd5_Tem300_3d.dat
+InitialPotentialFile=../igzo_pot_resistor_str_vs_0_vd4_Tem300_3d.dat
+CurrentMonitorFile=current_monitors.txt
+export_particles=1
+
+IGZO {
+  scattering_flags = acoustic, lo_abs, lo_ems, to_abs, to_ems
+  acoustic_model = deformation_potential_acoustic
+  optical_lo_model = deformation_potential_optical
+  optical_to_model = deformation_potential_optical
+  disorder_model = linear_tail_enhancement
+
+  acoustic_deformation_potential_eV = 1.7362
+  optical_deformation_potential_lo_eV_per_m = 1.7362e5
+  optical_deformation_potential_to_eV_per_m = 1.7362e5
+  nonparabolicity_eV_inv = 0.0
+  disorder_tail_energy_eV = 0.18
+  disorder_cutoff_energy_eV = 10.0
+}

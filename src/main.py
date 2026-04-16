@@ -28,6 +28,17 @@ def print_banner() -> None:
     print("----------------------------------------------------")
 
 
+def _resolve_input_relative(path_value: str | None, input_dir: str) -> str | None:
+    if not path_value:
+        return None
+    candidate = str(path_value).strip()
+    if not candidate:
+        return None
+    if os.path.isabs(candidate):
+        return candidate
+    return os.path.abspath(os.path.join(input_dir, candidate))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="3DMC Python Refactor Skeleton")
     parser.add_argument(
@@ -92,8 +103,14 @@ def main() -> int:
     output_base = config["output_dir"]
     if not os.path.isabs(output_base):
         output_base = os.path.join(project_root, output_base)
-    run_id = time.strftime("%Y%m%d_%H%M%S")
-    output_root = os.path.join(output_base, run_id)
+    resume_dir = _resolve_input_relative(config.get("ResumeFromOutputDir"), base_dir)
+    if resume_dir:
+        output_root = resume_dir
+    else:
+        run_id = str(config.get("output_name", "")).strip()
+        if not run_id:
+            run_id = time.strftime("%Y%m%d_%H%M%S")
+        output_root = os.path.join(output_base, run_id)
     os.makedirs(output_root, exist_ok=True)
     config["output_root"] = output_root
     print(f"[Run] output={output_root}")
